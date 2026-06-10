@@ -67,6 +67,13 @@ async def handle_ai_request(
     thinking_message = await _send_thinking_message(interaction, message)
 
     try:
+        async def update_action_status(content: str) -> None:
+            await _replace_thinking_message(
+                thinking_message=thinking_message,
+                content=content,
+                interaction=interaction,
+            )
+
         user_id = _get_user_id(interaction, message)
         channel_id = _get_channel_id(interaction, message)
         guild_id = _get_guild_id(interaction, message)
@@ -75,6 +82,7 @@ async def handle_ai_request(
             prompt,
             interaction=interaction,
             message=message,
+            status_callback=update_action_status,
         )
         if action_response is not None:
             chunks = split_discord_message(action_response)

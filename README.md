@@ -61,7 +61,18 @@ README.md
    - Read Message History
    - Use Slash Commands
    - Manage Channels: 자연어 채널 설정 변경과 자동 응답 채널 관리에 필요
-   - Manage Roles: 자연어 역할 생성/추가/제거에 필요
+   - Manage Roles: 자연어 역할 생성/수정/삭제/추가/제거에 필요
+   - Create Expressions, Manage Expressions: 이모지, 스티커, 사운드 생성/수정/삭제에 필요
+   - Manage Webhooks: 웹훅 생성/삭제에 필요
+   - View Audit Log: 감사 로그 조회에 필요
+   - Manage Server: 서버 이름/설명 변경에 필요
+   - Create Invite: 초대 링크 생성에 필요
+   - Kick Members, Ban Members, Moderate Members, Manage Nicknames: 멤버 제재와 별명 관리에 필요
+   - Manage Messages, Pin Messages: 메시지 삭제와 고정 관리에 필요
+   - Create Public Threads, Manage Threads: 스레드 생성/수정/삭제에 필요
+   - Create Events, Manage Events: 이벤트 생성/삭제에 필요
+   - Move Members, Mute Members, Deafen Members: 음성 채널 멤버 관리에 필요
+   - 서버 관리 전반을 자연어로 맡기려면 Discord의 **Administrator** 권한을 줄 수도 있지만, 강력한 권한이므로 신중히 사용하세요.
 6. 생성된 초대 URL로 서버에 봇을 초대합니다.
 
 ## 설치와 실행
@@ -183,6 +194,7 @@ python bot/main.py
 ### AI 에이전트 자연어 실행 도구
 
 별도 관리자 slash command를 만들지 않고, `/ai` 또는 봇 멘션으로 자연어 요청을 보내면 AI 에이전트가 실행 가능한 작업인지 판단한 뒤 권한을 확인하고 실행합니다.
+작업을 실행할 때는 기존 “생각 중...” 메시지가 `채널 생성 중...` → `채널 생성했습니다.`처럼 먼저 실시간으로 바뀐 뒤 최종 결과가 표시됩니다.
 
 자체 설정 예시:
 
@@ -197,26 +209,57 @@ python bot/main.py
 
 ```text
 @봇 현재 채널 슬로우모드 5초로 바꿔줘
+@봇 ai-chat 텍스트 채널 만들어줘
+@봇 #old-channel 삭제해줘
 /ai message:#general 채널 주제를 공지와 잡담으로 바꿔줘
 @봇 AI Helper 역할 만들어줘. 색상은 #5865F2
+@봇 @AI Helper 역할 이름을 Support로 바꿔줘
 @봇 @user에게 @AI Helper 역할 추가해줘
 @봇 @user에게서 @AI Helper 역할 제거해줘
+@봇 이 이미지로 party 이모지 만들어줘
+@봇 이 파일로 cheer 사운드 추가해줘
+@봇 최근 감사 로그 5개 보여줘
+@봇 #news 공지 채널을 #announcements로 팔로우해줘
+@봇 #forum에 help 태그 만들어줘
+@봇 서버 환영 화면을 켜고 설명을 "처음 오신 분은 안내 채널을 확인해 주세요"로 바꿔줘
+@봇 차단 목록 10명 보여줘
 ```
 
 실행 가능한 작업:
 
 - 자동 응답 채널 추가/제거/목록/모드 변경
 - AI 스타일 set/show/presets/custom
-- 텍스트 채널 이름/주제/슬로우모드/NSFW 변경
-- 역할 생성
-- 멤버에게 역할 추가/제거
+- 채널 생성/수정/삭제: 텍스트, 음성, 스테이지, 카테고리, 포럼, 미디어 채널
+- 채널 위치, 슬로우모드, 포럼 기본 레이아웃/정렬/태그 요구, 음성 RTC 지역/영상 품질 같은 세부 설정 변경
+- 채널 복제, 공지 채널 팔로우, 채널 고정 메시지 조회
+- 채널별 역할/멤버 권한 덮어쓰기 설정 또는 제거
+- 역할 생성/수정/삭제, 역할 permission/색상/아이콘/위치 수정, 멤버에게 역할 추가/제거
+- 이모지 생성/수정/삭제, 스티커 생성/수정/삭제, 사운드보드 사운드 생성/수정/삭제
+- 웹훅 생성/목록/삭제, 초대 링크 생성/목록/삭제, 감사 로그 조회
+- 서버 이름/설명/아이콘/배너/스플래시/시스템 채널/규칙 채널/업데이트 채널/초대 비활성화 설정 변경
+- 환영 화면, 서버 위젯, 서버 온보딩 기본 채널 설정 변경
+- 서버 템플릿 생성/목록/동기화/삭제
+- AutoMod 키워드 규칙 생성/목록/수정/삭제
+- 서버 통합 목록/삭제, 커스텀 초대 URL 조회
+- 차단 목록 조회, 사용자 ID/멘션 목록 대량 차단
+- 멤버 추방, 차단, 차단 해제, 타임아웃, 별명 변경
+- 비활동 멤버 정리(prune)
+- 음성 채널 멤버 이동, 서버 음소거, 서버 헤드셋 음소거, 음성 연결 끊기
+- 메시지 대량 삭제, 메시지 고정/고정 해제
+- 스레드 생성/수정/삭제, 이벤트 생성/수정/취소/삭제
+- 포럼 태그 생성/목록/수정/삭제
 
 권한:
 
-- 자동 응답 채널 관리와 채널 변경: 관리자 또는 **Manage Channels** 권한이 필요합니다. 채널 변경은 봇에게도 **Manage Channels** 권한이 있어야 합니다.
+- 자동 응답 채널 관리와 채널 작업: 관리자 또는 **Manage Channels** 권한이 필요합니다. 봇에게도 **Manage Channels** 권한이 있어야 합니다.
 - AI 스타일 set/custom: 관리자 또는 **Manage Guild** 권한이 필요합니다.
-- 역할 생성/추가/제거: 관리자 또는 **Manage Roles** 권한이 필요합니다. 봇에게도 **Manage Roles** 권한이 있어야 합니다.
-- 역할 추가/제거는 Discord 역할 순서 제한을 따릅니다. 봇과 실행 사용자의 가장 높은 역할이 대상 역할보다 높아야 합니다.
+- 역할 생성/수정/삭제/추가/제거: 관리자 또는 **Manage Roles** 권한이 필요합니다. 봇에게도 **Manage Roles** 권한이 있어야 합니다.
+- 이모지/스티커/사운드: **Create Expressions** 또는 **Manage Expressions** 권한이 필요합니다. 첨부파일 또는 URL이 필요합니다.
+- 웹훅/공지 채널 팔로우: **Manage Webhooks**, 감사 로그: **View Audit Log**, 서버 설정/환영 화면/위젯/온보딩/통합/커스텀 초대: **Manage Server**, 초대: **Create Invite** 권한이 필요합니다.
+- AutoMod와 서버 템플릿: **Manage Server** 권한이 필요합니다.
+- 멤버 제재/관리: 작업별로 **Kick Members**, **Ban Members**, **Moderate Members**, **Manage Nicknames**, **Move Members**, **Mute Members**, **Deafen Members** 권한이 필요합니다. 대량 차단은 **Ban Members**와 **Manage Server**가 모두 필요합니다.
+- 메시지/스레드/이벤트: 작업별로 **Manage Messages**, **Pin Messages**, **Create Public Threads**, **Manage Threads**, **Create Events**, **Manage Events** 권한이 필요합니다.
+- 역할/멤버 관리 작업은 Discord 역할 순서 제한을 따릅니다. 봇과 실행 사용자의 가장 높은 역할이 대상보다 높아야 합니다.
 - 요청이 설명인지 실행인지 애매하면 실행하지 않고 일반 AI 답변으로 처리합니다.
 
 ### 다른 봇의 slash command 호출
