@@ -109,7 +109,7 @@ def load_config() -> AppConfig:
         ai_provider=provider,
         system_prompt=_get_env("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
         ai_temperature=_get_float("AI_TEMPERATURE", 0.7),
-        ai_max_tokens=_get_optional_int("AI_MAX_TOKENS") or 1024,
+        ai_max_tokens=_get_optional_int("AI_MAX_TOKENS") or 4096,
         request_timeout_seconds=_get_float("REQUEST_TIMEOUT_SECONDS", 60.0),
         openai_api_key=_get_env("OPENAI_API_KEY"),
         openai_model=_get_env("OPENAI_MODEL", "gpt-4o-mini"),

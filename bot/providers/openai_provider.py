@@ -47,7 +47,8 @@ class OpenAIProvider(HttpProvider):
 
 def _extract_openai_content(data: dict[str, Any]) -> str:
     try:
-        content = data["choices"][0]["message"]["content"]
+        first_choice = data["choices"][0]
+        content = first_choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise ProviderResponseError("OpenAI response did not include message content.") from exc
 
@@ -62,4 +63,8 @@ def _extract_openai_content(data: dict[str, Any]) -> str:
     if not isinstance(content, str) or not content.strip():
         raise ProviderResponseError("OpenAI response content was empty.")
 
-    return content.strip()
+    content = content.strip()
+    if first_choice.get("finish_reason") == "length":
+        content += "\n\n[답변이 AI_MAX_TOKENS 제한 때문에 중간에 멈췄어요. 더 길게 보려면 .env의 AI_MAX_TOKENS 값을 올린 뒤 봇을 재시작하세요.]"
+
+    return content

@@ -88,4 +88,7 @@ def _extract_gemini_content(data: dict[str, Any]) -> str:
     if not text:
         raise ProviderResponseError("Gemini response content was empty.")
 
+    if str(first_candidate.get("finishReason", "")).upper() == "MAX_TOKENS":
+        text += "\n\n[답변이 AI_MAX_TOKENS 제한 때문에 중간에 멈췄어요. 더 길게 보려면 .env의 AI_MAX_TOKENS 값을 올린 뒤 봇을 재시작하세요.]"
+
     return text
