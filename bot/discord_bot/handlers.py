@@ -14,6 +14,7 @@ from discord_bot.agent_actions import (
     describe_action_plan,
     execute_agent_action,
     plan_agent_action,
+    validate_action_plan,
 )
 from discord_bot.channel_context import build_channel_context
 from discord_bot.settings_store import AutoChannelSettings
@@ -112,6 +113,15 @@ async def handle_ai_request(
                 message=message,
                 status_callback=update_action_status,
             )
+            validation_error = await validate_action_plan(action_context, action_plan)
+            if validation_error:
+                await _replace_thinking_message(
+                    thinking_message=thinking_message,
+                    content=validation_error,
+                    interaction=interaction,
+                )
+                return
+
             if action_requires_confirmation(action_plan):
                 await _request_action_confirmation(
                     bot=bot,

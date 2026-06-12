@@ -310,6 +310,26 @@ async def execute_agent_action(context: "ActionContext", plan: ActionPlan) -> st
     return await _execute_plan(context, plan)
 
 
+async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> str | None:
+    if plan.action == "member_move_voice":
+        member = await _resolve_member(context, plan.args.get("member"))
+        if member is None:
+            return "이동할 멤버를 찾지 못했어요. 멤버를 멘션하거나 정확한 별명/표시 이름으로 다시 요청해 주세요."
+        if _resolve_voice_channel(context, plan.args.get("channel")) is None:
+            return "이동할 음성 채널을 찾지 못했어요. 음성 채널 이름을 확인해 주세요."
+        if member.voice is None:
+            return f"{member.display_name} 님이 현재 음성 채널에 접속해 있지 않아요."
+
+    if plan.action == "member_disconnect_voice":
+        member = await _resolve_member(context, plan.args.get("member"))
+        if member is None:
+            return "연결을 끊을 멤버를 찾지 못했어요. 멤버를 멘션하거나 정확한 별명/표시 이름으로 다시 요청해 주세요."
+        if member.voice is None:
+            return f"{member.display_name} 님이 현재 음성 채널에 접속해 있지 않아요."
+
+    return None
+
+
 def action_requires_confirmation(plan: ActionPlan) -> bool:
     return plan.action not in READ_ONLY_ACTIONS
 
@@ -352,6 +372,15 @@ def _natural_action_summary(plan: ActionPlan) -> str:
         member = _human_target(args.get("member"), fallback="대상 멤버")
         nickname = str(args.get("nickname") or "없음").strip()
         return f"{member} 님 별명을 {nickname}(으)로 변경"
+
+    if plan.action == "member_move_voice":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        channel = _human_target(args.get("channel"), fallback="대상 음성 채널")
+        return f"{member} 님을 {channel} 음성 채널로 이동"
+
+    if plan.action == "member_disconnect_voice":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        return f"{member} 님 음성 연결 끊기"
 
     if plan.action == "role_add":
         member = _human_target(args.get("member"), fallback="대상 멤버")
@@ -2827,8 +2856,16 @@ def _resolve_guild_channel(
     if not name:
         return context.channel if isinstance(context.channel, (discord.abc.GuildChannel, discord.Thread)) else None
 
-    return discord.utils.find(
+    exact_match = discord.utils.find(
         lambda channel: getattr(channel, "name", None) == name,
+        [*context.guild.channels, *context.guild.threads],
+    )
+    if exact_match is not None:
+        return exact_match
+
+    normalized_name = _normalize_lookup_text(name)
+    return discord.utils.find(
+        lambda channel: normalized_name == _normalize_lookup_text(getattr(channel, "name", "")),
         [*context.guild.channels, *context.guild.threads],
     )
 
@@ -2888,12 +2925,27 @@ async def _resolve_member(context: ActionContext, value: Any) -> discord.Member 
     if cached_match is not None:
         return cached_match
 
+    voice_match = _find_member_by_name(_voice_channel_members(context.guild), name)
+    if voice_match is not None:
+        return voice_match
+
     try:
         queried = await context.guild.query_members(query=name, limit=10)
     except (discord.Forbidden, discord.HTTPException):
         queried = []
 
     return _find_member_by_name(queried, name)
+
+
+def _voice_channel_members(guild: discord.Guild) -> list[discord.Member]:
+    members: list[discord.Member] = []
+    seen: set[int] = set()
+    for channel in [*guild.voice_channels, *guild.stage_channels]:
+        for member in channel.members:
+            if member.id not in seen:
+                members.append(member)
+                seen.add(member.id)
+    return members
 
 
 def _find_member_by_name(members: list[discord.Member] | tuple[discord.Member, ...], query: str) -> discord.Member | None:
