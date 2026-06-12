@@ -209,7 +209,7 @@ async def _request_action_confirmation(
         requester_id=requester.id if requester else 0,
     )
     content = (
-        "실행할까요?\n"
+        "작업 내용\n"
         f"{describe_action_plan(plan)}"
     )
     await _edit_ai_message(
@@ -257,7 +257,7 @@ class AgentActionConfirmView(discord.ui.View):
         self.completed = True
         self._disable_buttons()
         await interaction.response.edit_message(
-            content=f"실행 중...\n{describe_action_plan(self.plan)}",
+            content=f"실행 중\n{describe_action_plan(self.plan)}",
             view=self,
             allowed_mentions=discord.AllowedMentions.none(),
         )
