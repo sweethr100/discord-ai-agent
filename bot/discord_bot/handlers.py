@@ -6,7 +6,15 @@ from typing import TYPE_CHECKING
 import discord
 
 from agent.styles import build_system_prompt
-from discord_bot.agent_actions import try_handle_agent_action
+from discord_bot.agent_actions import (
+    ActionContext,
+    ActionPlan,
+    action_requires_confirmation,
+    build_action_context,
+    describe_action_plan,
+    execute_agent_action,
+    plan_agent_action,
+)
 from discord_bot.channel_context import build_channel_context
 from discord_bot.settings_store import AutoChannelSettings
 from providers.base import ProviderHTTPStatusError, ProviderQuotaError
@@ -47,6 +55,7 @@ QUESTION_HINTS = (
     "할까",
     "가능",
 )
+CONFIRMATION_TIMEOUT_SECONDS = 60.0
 
 
 async def handle_ai_request(
@@ -79,14 +88,36 @@ async def handle_ai_request(
         user_id = _get_user_id(interaction, message)
         channel_id = _get_channel_id(interaction, message)
         guild_id = _get_guild_id(interaction, message)
-        action_response = await try_handle_agent_action(
-            bot,
-            prompt,
-            interaction=interaction,
-            message=message,
-            status_callback=update_action_status,
-        )
-        if action_response is not None:
+        action_plan = await plan_agent_action(bot, prompt)
+        if action_plan is not None:
+            guild = interaction.guild if interaction else message.guild if message else None
+            if guild is None:
+                await _replace_thinking_message(
+                    thinking_message=thinking_message,
+                    content="서버 관리 작업은 Discord 서버 안에서만 실행할 수 있어요.",
+                    interaction=interaction,
+                )
+                return
+
+            action_context = build_action_context(
+                bot=bot,
+                guild=guild,
+                interaction=interaction,
+                message=message,
+                status_callback=update_action_status,
+            )
+            if action_requires_confirmation(action_plan):
+                await _request_action_confirmation(
+                    bot=bot,
+                    plan=action_plan,
+                    context=action_context,
+                    thinking_message=thinking_message,
+                    interaction=interaction,
+                    message=message,
+                )
+                return
+
+            action_response = await execute_agent_action(action_context, action_plan)
             chunks = split_discord_message(normalize_discord_markdown(action_response))
             await _send_response_chunks(
                 chunks,
@@ -158,6 +189,136 @@ async def handle_ai_request(
             content=GENERIC_USER_ERROR,
             interaction=interaction,
         )
+
+
+async def _request_action_confirmation(
+    *,
+    bot: "DiscordAIBot",
+    plan: ActionPlan,
+    context: ActionContext,
+    thinking_message: discord.Message | discord.InteractionMessage,
+    interaction: discord.Interaction | None,
+    message: discord.Message | None,
+) -> None:
+    requester = interaction.user if interaction else message.author if message else None
+    view = AgentActionConfirmView(
+        bot=bot,
+        plan=plan,
+        context=context,
+        response_message=thinking_message,
+        requester_id=requester.id if requester else 0,
+    )
+    requester_label = requester.mention if requester else "알 수 없음"
+    content = (
+        "관리 작업 실행 확인\n"
+        f"{describe_action_plan(plan)}\n\n"
+        f"요청자: {requester_label}\n"
+        "수락을 누르면 바로 실행하고, 거절을 누르면 취소합니다."
+    )
+    await _edit_ai_message(
+        thinking_message,
+        content=content,
+        view=view,
+    )
+
+
+class AgentActionConfirmView(discord.ui.View):
+    def __init__(
+        self,
+        *,
+        bot: "DiscordAIBot",
+        plan: ActionPlan,
+        context: ActionContext,
+        response_message: discord.Message | discord.InteractionMessage,
+        requester_id: int,
+    ) -> None:
+        super().__init__(timeout=CONFIRMATION_TIMEOUT_SECONDS)
+        self.bot = bot
+        self.plan = plan
+        self.context = context
+        self.response_message = response_message
+        self.requester_id = requester_id
+        self.completed = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.requester_id:
+            return True
+
+        await interaction.response.send_message(
+            "이 작업은 요청한 사용자만 수락하거나 거절할 수 있어요.",
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        return False
+
+    @discord.ui.button(label="수락", style=discord.ButtonStyle.danger)
+    async def accept(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        self.completed = True
+        self._disable_buttons()
+        await interaction.response.edit_message(
+            content=f"{describe_action_plan(self.plan)}\n\n수락했습니다. 실행을 시작합니다.",
+            view=self,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+        async def update_status(content: str) -> None:
+            await _edit_ai_message(
+                self.response_message,
+                content=content,
+                view=None,
+            )
+
+        self.context.status_callback = update_status
+        try:
+            response = await execute_agent_action(self.context, self.plan)
+        except Exception:
+            logger.exception("Failed to execute confirmed AI action: %s", self.plan.action)
+            await _edit_ai_message(
+                self.response_message,
+                content=GENERIC_USER_ERROR,
+                view=None,
+            )
+            self.stop()
+            return
+
+        chunks = split_discord_message(normalize_discord_markdown(response))
+        await _send_response_chunks_to_message(self.response_message, chunks)
+        self.stop()
+
+    @discord.ui.button(label="거절", style=discord.ButtonStyle.secondary)
+    async def reject(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        self.completed = True
+        self._disable_buttons()
+        await interaction.response.edit_message(
+            content=f"{describe_action_plan(self.plan)}\n\n거절했습니다. 작업을 실행하지 않았어요.",
+            view=self,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        if self.completed:
+            return
+
+        self._disable_buttons()
+        await _edit_ai_message(
+            self.response_message,
+            content=f"{describe_action_plan(self.plan)}\n\n시간이 지나 작업을 실행하지 않았어요.",
+            view=self,
+        )
+
+    def _disable_buttons(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
 
 
 async def handle_message(bot: "DiscordAIBot", message: discord.Message) -> None:
@@ -329,6 +490,26 @@ async def _send_response_chunks(
         )
 
 
+async def _send_response_chunks_to_message(
+    response_message: discord.Message | discord.InteractionMessage,
+    chunks: list[str],
+) -> None:
+    if not chunks:
+        chunks = ["응답이 비어 있어요."]
+
+    await _edit_ai_message(response_message, content=chunks[0], view=None)
+
+    channel = getattr(response_message, "channel", None)
+    if channel is None:
+        return
+
+    for chunk in chunks[1:]:
+        await channel.send(
+            chunk,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
 async def _replace_thinking_message(
     *,
     thinking_message: discord.Message | discord.InteractionMessage,
@@ -344,5 +525,18 @@ async def _replace_thinking_message(
 
     await thinking_message.edit(
         content=content,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
+
+
+async def _edit_ai_message(
+    response_message: discord.Message | discord.InteractionMessage,
+    *,
+    content: str,
+    view: discord.ui.View | None,
+) -> None:
+    await response_message.edit(
+        content=content,
+        view=view,
         allowed_mentions=discord.AllowedMentions.none(),
     )

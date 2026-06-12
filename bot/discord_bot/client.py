@@ -18,6 +18,7 @@ class DiscordAIBot(commands.Bot):
     def __init__(self, config: AppConfig, agent: AIAgent) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.members = True
 
         super().__init__(
             command_prefix=commands.when_mentioned,

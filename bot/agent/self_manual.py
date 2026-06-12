@@ -49,6 +49,7 @@ SELF_USAGE_MANUAL = """\
 - 봇 자신이 보낸 메시지와 다른 봇이 보낸 메시지에는 응답하지 않는다.
 - 자동 응답 채널과 멘션 응답이 동시에 걸려도 한 번만 응답한다.
 - 멘션 응답과 자동 응답 채널 기능을 쓰려면 Discord Developer Portal에서 Message Content Intent를 켜야 한다.
+- 멤버를 별명이나 표시 이름으로 찾게 하려면 Discord Developer Portal에서 Server Members Intent도 켜야 한다.
 
 채팅방 문맥 읽기
 - `/ai`, 봇 멘션, 자동 응답 채널의 일반 AI 답변은 같은 채널의 최근 메시지를 참고한다.
@@ -102,6 +103,7 @@ SELF_USAGE_MANUAL = """\
 - 예: `@봇 @AI Helper 역할 이름을 Support로 바꿔줘`
 - 예: `@봇 @user에게 @AI Helper 역할 추가해줘`
 - 예: `@봇 @user에게서 @AI Helper 역할 제거해줘`
+- 예: `@봇 sweet 10분 타임아웃 해줘`처럼 멘션 없이 별명이나 표시 이름으로 멤버를 지정할 수 있다.
 - 예: `@봇 이 이미지로 party 이모지 만들어줘`처럼 이미지 첨부와 함께 요청할 수 있다.
 - 예: `@봇 이 파일로 cheer 사운드 추가해줘`처럼 오디오 첨부와 함께 요청할 수 있다.
 - 예: `@봇 #news 공지 채널을 #announcements로 팔로우해줘`
@@ -138,6 +140,8 @@ SELF_USAGE_MANUAL = """\
   - 메시지 정리는 Manage Messages, 메시지 고정은 Pin Messages, 스레드는 Manage Threads 또는 Create Public Threads, 이벤트는 Create Events 또는 Manage Events가 필요하다.
   - 봇에게도 같은 종류의 권한이 필요하다.
 - 역할/멤버 관리, 추방, 차단, 타임아웃, 별명 변경은 봇과 실행 사용자의 가장 높은 역할이 대상보다 높아야 한다.
+- 서버 설정 변경, 멤버 제재, 역할/채널 수정 같은 실행 작업은 바로 실행하지 않고 채팅에 작업 내용을 표시한 뒤 수락/거절 버튼을 보여준다. 요청자가 수락해야 실행된다.
+- 멤버 대상은 멘션이나 ID가 가장 정확하지만, 별명/표시 이름/유저명만 알려줘도 가능한 경우 자동으로 찾는다. 동명이인이 있으면 안전하게 찾지 못한 것으로 처리한다.
 
 자연어 도구 주의사항
 - 봇이 Administrator 권한을 갖고 있더라도 역할 관리는 역할 순서 제한을 받는다.

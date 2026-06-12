@@ -110,6 +110,7 @@ ACTION_PLANNER_PROMPT = """\
 - "설정법 알려줘", "명령어 뭐야", "할 수 있어?" 같은 설명 요청은 none이다.
 - 삭제, 차단, 추방, 대량 삭제 같은 파괴적 작업은 사용자가 명확히 실행을 요청한 경우에만 선택하라.
 - channel/member/role/thread/forum/emoji/sticker/sound/event/webhook/integration은 Discord mention 또는 ID가 있으면 그대로 넣어라. 예: <#123>, <@456>, <@&789>.
+- member가 멘션이나 ID가 아니어도 사용자가 말한 별명, 표시 이름, 유저명을 문자열 그대로 넣어라.
 - 현재 채널을 뜻하면 channel을 "current"로 넣어라.
 - type은 text, voice, stage, category, forum, media 중 하나만 사용하라.
 - mode는 always, question_only, keyword 중 하나만 사용하라.
@@ -212,6 +213,22 @@ ACTION_STATUS_LABELS = {
     "vanity_invite_show": "커스텀 초대 조회",
 }
 
+READ_ONLY_ACTIONS = {
+    "autochannel_list",
+    "style_show",
+    "style_presets",
+    "channel_pins_list",
+    "webhook_list",
+    "invite_list",
+    "audit_log_show",
+    "template_list",
+    "automod_rule_list",
+    "forum_tag_list",
+    "integration_list",
+    "ban_list",
+    "vanity_invite_show",
+}
+
 
 @dataclass(frozen=True)
 class ActionPlan:
@@ -232,11 +249,36 @@ async def try_handle_agent_action(
     if guild is None:
         return None
 
+    plan = await plan_agent_action(bot, prompt)
+    if plan is None:
+        return None
+
+    context = build_action_context(
+        bot=bot,
+        guild=guild,
+        interaction=interaction,
+        message=message,
+        status_callback=status_callback,
+    )
+    return await execute_agent_action(context, plan)
+
+
+async def plan_agent_action(bot: "DiscordAIBot", prompt: str) -> ActionPlan | None:
     plan = await _plan_action(bot, prompt)
     if plan is None or plan.action == "none" or plan.confidence < 0.65:
         return None
+    return plan
 
-    context = ActionContext(
+
+def build_action_context(
+    *,
+    bot: "DiscordAIBot",
+    guild: discord.Guild,
+    interaction: discord.Interaction | None,
+    message: discord.Message | None,
+    status_callback: Callable[[str], Awaitable[None]] | None = None,
+) -> "ActionContext":
+    return ActionContext(
         bot=bot,
         guild=guild,
         channel=interaction.channel if interaction else message.channel if message else None,
@@ -244,7 +286,22 @@ async def try_handle_agent_action(
         message=message,
         status_callback=status_callback,
     )
+
+
+async def execute_agent_action(context: "ActionContext", plan: ActionPlan) -> str:
     return await _execute_plan(context, plan)
+
+
+def action_requires_confirmation(plan: ActionPlan) -> bool:
+    return plan.action not in READ_ONLY_ACTIONS
+
+
+def describe_action_plan(plan: ActionPlan) -> str:
+    label = _action_label(plan.action)
+    args = _format_action_args(plan.args)
+    if not args:
+        return f"작업: **{label}**"
+    return f"작업: **{label}**\n{args}"
 
 
 @dataclass
@@ -317,6 +374,33 @@ async def _emit_status(context: ActionContext, content: str) -> None:
 
 def _action_label(action: str) -> str:
     return ACTION_STATUS_LABELS.get(action, "작업")
+
+
+def _format_action_args(args: dict[str, Any]) -> str:
+    if not args:
+        return ""
+
+    lines = ["대상/설정:"]
+    for key, value in args.items():
+        if value is None or value == "" or value == []:
+            continue
+        rendered = _shorten_arg_value(value)
+        lines.append(f"- `{key}`: {rendered}")
+        if len(lines) >= 9:
+            lines.append("- ...")
+            break
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _shorten_arg_value(value: Any, *, limit: int = 120) -> str:
+    if isinstance(value, (dict, list)):
+        rendered = json.dumps(value, ensure_ascii=False)
+    else:
+        rendered = str(value)
+    rendered = " ".join(rendered.split())
+    if len(rendered) <= limit:
+        return rendered
+    return f"{rendered[: limit - 1]}..."
 
 
 def _looks_successful(result: str) -> bool:
@@ -2678,10 +2762,48 @@ async def _resolve_member(context: ActionContext, value: Any) -> discord.Member 
     if not name:
         return None
 
-    return discord.utils.find(
-        lambda member: member.name == name or member.display_name == name or str(member) == name,
-        context.guild.members,
-    )
+    cached_match = _find_member_by_name(context.guild.members, name)
+    if cached_match is not None:
+        return cached_match
+
+    try:
+        queried = await context.guild.query_members(query=name, limit=10)
+    except (discord.Forbidden, discord.HTTPException):
+        queried = []
+
+    return _find_member_by_name(queried, name)
+
+
+def _find_member_by_name(members: list[discord.Member] | tuple[discord.Member, ...], query: str) -> discord.Member | None:
+    normalized_query = _normalize_lookup_text(query)
+    if not normalized_query:
+        return None
+
+    exact_matches: list[discord.Member] = []
+    partial_matches: list[discord.Member] = []
+    for member in members:
+        candidates = {
+            member.name,
+            member.display_name,
+            member.global_name or "",
+            str(member),
+        }
+        normalized_candidates = {_normalize_lookup_text(candidate) for candidate in candidates if candidate}
+        if normalized_query in normalized_candidates:
+            exact_matches.append(member)
+            continue
+        if any(normalized_query in candidate for candidate in normalized_candidates):
+            partial_matches.append(member)
+
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(partial_matches) == 1:
+        return partial_matches[0]
+    return None
+
+
+def _normalize_lookup_text(value: str) -> str:
+    return re.sub(r"\s+", "", value.strip().casefold())
 
 
 def _resolve_role(context: ActionContext, value: Any) -> discord.Role | None:

@@ -51,7 +51,9 @@ README.md
 
 1. [Discord Developer Portal](https://discord.com/developers/applications)에서 **New Application**을 만듭니다.
 2. 왼쪽 **Bot** 메뉴에서 봇을 생성하고 **Reset Token** 또는 **Copy Token**으로 토큰을 복사합니다.
-3. 멘션 응답과 자동 응답 채널 기능을 쓰려면 **Bot > Privileged Gateway Intents > Message Content Intent**를 켭니다.
+3. **Bot > Privileged Gateway Intents**에서 필요한 intent를 켭니다.
+   - **Message Content Intent**: 멘션 응답, 자동 응답 채널, 채팅방 문맥 읽기에 필요
+   - **Server Members Intent**: 멤버를 멘션/ID 없이 별명이나 표시 이름으로 찾을 때 필요
 4. **OAuth2 > URL Generator**에서 아래 scope를 선택합니다.
    - `bot`
    - `applications.commands`
@@ -231,6 +233,7 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 @봇 @AI Helper 역할 이름을 Support로 바꿔줘
 @봇 @user에게 @AI Helper 역할 추가해줘
 @봇 @user에게서 @AI Helper 역할 제거해줘
+@봇 sweet 10분 타임아웃 해줘
 @봇 이 이미지로 party 이모지 만들어줘
 @봇 이 파일로 cheer 사운드 추가해줘
 @봇 최근 감사 로그 5개 보여줘
@@ -276,6 +279,8 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 - 메시지/스레드/이벤트: 작업별로 **Manage Messages**, **Pin Messages**, **Create Public Threads**, **Manage Threads**, **Create Events**, **Manage Events** 권한이 필요합니다.
 - 역할/멤버 관리 작업은 Discord 역할 순서 제한을 따릅니다. 봇과 실행 사용자의 가장 높은 역할이 대상보다 높아야 합니다.
 - 요청이 설명인지 실행인지 애매하면 실행하지 않고 일반 AI 답변으로 처리합니다.
+- 서버 설정 변경, 멤버 제재, 역할/채널 수정 같은 실행 작업은 바로 실행하지 않고 채팅에 작업 내용을 먼저 표시합니다. 요청자가 **수락** 버튼을 눌러야 실행되고, **거절** 또는 시간 초과 시 취소됩니다.
+- 멤버 대상은 멘션이나 ID가 가장 정확하지만, 별명/표시 이름/유저명만 알려줘도 가능한 경우 자동으로 찾습니다. 동명이인이 있으면 찾지 못한 것으로 처리해 안전하게 멈춥니다.
 
 ### 다른 봇의 slash command 호출
 
@@ -402,6 +407,7 @@ Claude/Anthropic은 API가 `max_tokens` 값을 필수로 요구하므로, `AI_MA
 ## 문제 해결
 
 - 멘션이나 자동 응답 채널이 작동하지 않으면 Discord Developer Portal에서 **Message Content Intent**가 켜져 있는지 확인하세요.
+- 별명만으로 멤버를 찾지 못하면 **Server Members Intent**가 켜져 있는지, 봇이 재시작됐는지 확인하세요.
 - 채팅방 문맥을 못 읽는 것 같으면 봇 역할에 **View Channel** 및 **Read Message History** 권한이 있는지 확인하세요.
 - `/ai`가 보이지 않으면 `DISCORD_GUILD_ID`를 넣고 봇을 재시작해 보세요.
 - 답변이 `### 서버 운영`처럼 중간에 끊기면 provider/model 출력 한도에 걸린 것입니다. `.env`에 `AI_MAX_TOKENS`를 낮게 설정했다면 값을 비우거나 더 크게 조정하고 봇을 재시작하세요.
