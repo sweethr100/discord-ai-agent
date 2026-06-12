@@ -156,6 +156,21 @@ python bot/main.py
 
 봇 자신이 보낸 메시지와 다른 봇이 보낸 메시지에는 응답하지 않습니다.
 
+### 채팅방 문맥 읽기
+
+일반 AI 답변은 같은 채널의 최근 메시지를 참고할 수 있습니다. 기본값은 최근 20개 메시지, 최대 6000자입니다.
+
+```env
+CHANNEL_CONTEXT_MESSAGES=20
+CHANNEL_CONTEXT_CHAR_LIMIT=6000
+```
+
+- `CHANNEL_CONTEXT_MESSAGES=0` 또는 `CHANNEL_CONTEXT_CHAR_LIMIT=0`으로 설정하면 문맥 읽기를 끌 수 있습니다.
+- `/ai`, 봇 멘션, 자동 응답 채널 답변에 모두 적용됩니다.
+- 서버 관리 자연어 액션 판단에는 과거 문맥을 넣지 않습니다. 과거 대화가 실수로 실행 명령처럼 처리되는 것을 막기 위해서입니다.
+- 봇에게 해당 채널의 **View Channel** 및 **Read Message History** 권한이 필요합니다.
+- 메시지 내용을 읽으려면 Discord Developer Portal에서 **Message Content Intent**가 켜져 있어야 합니다.
+
 ### AI 스타일 관리
 
 ```text
@@ -387,6 +402,7 @@ Claude/Anthropic은 API가 `max_tokens` 값을 필수로 요구하므로, `AI_MA
 ## 문제 해결
 
 - 멘션이나 자동 응답 채널이 작동하지 않으면 Discord Developer Portal에서 **Message Content Intent**가 켜져 있는지 확인하세요.
+- 채팅방 문맥을 못 읽는 것 같으면 봇 역할에 **View Channel** 및 **Read Message History** 권한이 있는지 확인하세요.
 - `/ai`가 보이지 않으면 `DISCORD_GUILD_ID`를 넣고 봇을 재시작해 보세요.
 - 답변이 `### 서버 운영`처럼 중간에 끊기면 provider/model 출력 한도에 걸린 것입니다. `.env`에 `AI_MAX_TOKENS`를 낮게 설정했다면 값을 비우거나 더 크게 조정하고 봇을 재시작하세요.
 - provider 설정 오류는 실행 시 콘솔에 자세히 출력됩니다. API 키는 `.env`에만 넣고 코드에 하드코딩하지 마세요.

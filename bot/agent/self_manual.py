@@ -10,6 +10,7 @@ SELF_USAGE_MANUAL = """\
 - `/ai message:<내용> style:<선택>`: AI에게 직접 질문한다.
 - 봇 멘션: 예를 들어 `@봇 오늘 할 일 정리해줘`처럼 말하면 AI가 응답한다.
 - 자동 응답 채널: `/autochannel add`로 등록된 채널에서는 멘션이나 `/ai` 없이도 일반 메시지에 AI가 응답한다.
+- 채팅방 문맥: 일반 AI 답변은 같은 채널의 최근 메시지를 참고할 수 있다. 기본값은 최근 20개 메시지, 최대 6000자다.
 - 자연어 실행 도구가 실제 작업을 실행할 때는 “생각 중...” 메시지가 `채널 생성 중...` → `채널 생성했습니다.`처럼 먼저 실시간으로 바뀐 뒤 최종 결과가 표시된다.
 
 다른 봇 slash command에 대한 한계
@@ -48,6 +49,15 @@ SELF_USAGE_MANUAL = """\
 - 봇 자신이 보낸 메시지와 다른 봇이 보낸 메시지에는 응답하지 않는다.
 - 자동 응답 채널과 멘션 응답이 동시에 걸려도 한 번만 응답한다.
 - 멘션 응답과 자동 응답 채널 기능을 쓰려면 Discord Developer Portal에서 Message Content Intent를 켜야 한다.
+
+채팅방 문맥 읽기
+- `/ai`, 봇 멘션, 자동 응답 채널의 일반 AI 답변은 같은 채널의 최근 메시지를 참고한다.
+- `.env`의 `CHANNEL_CONTEXT_MESSAGES`로 읽을 메시지 수를 설정한다. 기본값은 20이다.
+- `.env`의 `CHANNEL_CONTEXT_CHAR_LIMIT`로 문맥 최대 글자 수를 설정한다. 기본값은 6000이다.
+- 둘 중 하나를 0으로 설정하면 문맥 읽기가 꺼진다.
+- 서버 관리 자연어 액션 판단에는 과거 문맥을 넣지 않는다. 과거 대화가 실수로 실행 명령처럼 처리되는 것을 막기 위해서다.
+- 봇에게 해당 채널의 View Channel 및 Read Message History 권한이 필요하다.
+- 메시지 내용을 읽으려면 Discord Developer Portal에서 Message Content Intent가 켜져 있어야 한다.
 
 명령어: AI 스타일 관리
 - `/style set style:<default|grok|serious|teacher|coder|korean_friend|custom>`

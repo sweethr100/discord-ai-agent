@@ -47,6 +47,8 @@ class AppConfig:
     system_prompt: str
     ai_temperature: float
     ai_max_tokens: int | None
+    channel_context_messages: int
+    channel_context_char_limit: int
     request_timeout_seconds: float
     openai_api_key: str
     openai_model: str
@@ -70,6 +72,12 @@ class AppConfig:
 
         if self.ai_max_tokens is not None and self.ai_max_tokens <= 0:
             raise ConfigError("AI_MAX_TOKENS 값은 1 이상이어야 합니다.")
+
+        if self.channel_context_messages < 0:
+            raise ConfigError("CHANNEL_CONTEXT_MESSAGES 값은 0 이상이어야 합니다.")
+
+        if self.channel_context_char_limit < 0:
+            raise ConfigError("CHANNEL_CONTEXT_CHAR_LIMIT 값은 0 이상이어야 합니다.")
 
         if self.request_timeout_seconds <= 0:
             raise ConfigError("REQUEST_TIMEOUT_SECONDS 값은 1 이상이어야 합니다.")
@@ -103,6 +111,8 @@ def load_config() -> AppConfig:
     load_dotenv()
 
     provider = _get_env("AI_PROVIDER", "openai").lower()
+    channel_context_messages = _get_optional_int("CHANNEL_CONTEXT_MESSAGES")
+    channel_context_char_limit = _get_optional_int("CHANNEL_CONTEXT_CHAR_LIMIT")
     config = AppConfig(
         discord_token=_get_env("DISCORD_TOKEN"),
         discord_guild_id=_get_optional_int("DISCORD_GUILD_ID"),
@@ -110,6 +120,8 @@ def load_config() -> AppConfig:
         system_prompt=_get_env("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
         ai_temperature=_get_float("AI_TEMPERATURE", 0.7),
         ai_max_tokens=_get_optional_int("AI_MAX_TOKENS"),
+        channel_context_messages=channel_context_messages if channel_context_messages is not None else 20,
+        channel_context_char_limit=channel_context_char_limit if channel_context_char_limit is not None else 6000,
         request_timeout_seconds=_get_float("REQUEST_TIMEOUT_SECONDS", 60.0),
         openai_api_key=_get_env("OPENAI_API_KEY"),
         openai_model=_get_env("OPENAI_MODEL", "gpt-4o-mini"),

@@ -7,6 +7,7 @@ import discord
 
 from agent.styles import build_system_prompt
 from discord_bot.agent_actions import try_handle_agent_action
+from discord_bot.channel_context import build_channel_context
 from discord_bot.settings_store import AutoChannelSettings
 from providers.base import ProviderHTTPStatusError, ProviderQuotaError
 from utils.discord_markdown import normalize_discord_markdown
@@ -101,12 +102,19 @@ async def handle_ai_request(
             style=effective_style,
             custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
         )
+        channel_context = await build_channel_context(
+            interaction=interaction,
+            message=message,
+            limit=bot.config.channel_context_messages,
+            char_limit=bot.config.channel_context_char_limit,
+        )
         response = await bot.agent.run(
             prompt,
             user_id=user_id,
             channel_id=channel_id,
             source=source,
             system_prompt=system_prompt,
+            channel_context=channel_context,
         )
         chunks = split_discord_message(normalize_discord_markdown(response))
         await _send_response_chunks(
