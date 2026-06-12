@@ -304,8 +304,8 @@ def describe_action_plan(plan: ActionPlan) -> str:
     label = _action_label(plan.action)
     args = _format_action_args(plan.args)
     if not args:
-        return f"작업: **{label}**"
-    return f"작업: **{label}**\n{args}"
+        return f"작업 내용: **{label}**"
+    return f"작업 내용: **{label}** / {args}"
 
 
 def _rule_based_action_plan(prompt: str) -> ActionPlan | None:
@@ -551,16 +551,16 @@ def _format_action_args(args: dict[str, Any]) -> str:
     if not args:
         return ""
 
-    lines = ["대상/설정:"]
+    parts: list[str] = []
     for key, value in args.items():
         if value is None or value == "" or value == []:
             continue
         rendered = _shorten_arg_value(value)
-        lines.append(f"- `{key}`: {rendered}")
-        if len(lines) >= 9:
-            lines.append("- ...")
+        parts.append(f"`{key}`={rendered}")
+        if len(parts) >= 8:
+            parts.append("...")
             break
-    return "\n".join(lines) if len(lines) > 1 else ""
+    return " / ".join(parts)
 
 
 def _shorten_arg_value(value: Any, *, limit: int = 120) -> str:

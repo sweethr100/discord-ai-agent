@@ -208,10 +208,7 @@ async def _request_action_confirmation(
         response_message=thinking_message,
         requester_id=requester.id if requester else 0,
     )
-    content = (
-        "작업 내용\n"
-        f"{describe_action_plan(plan)}"
-    )
+    content = describe_action_plan(plan)
     await _edit_ai_message(
         thinking_message,
         content=content,
@@ -257,7 +254,7 @@ class AgentActionConfirmView(discord.ui.View):
         self.completed = True
         self._disable_buttons()
         await interaction.response.edit_message(
-            content=f"실행 중\n{describe_action_plan(self.plan)}",
+            content=f"실행 중: {describe_action_plan(self.plan)}",
             view=self,
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -295,7 +292,7 @@ class AgentActionConfirmView(discord.ui.View):
         self.completed = True
         self._disable_buttons()
         await interaction.response.edit_message(
-            content=f"거절했습니다.\n{describe_action_plan(self.plan)}",
+            content=f"거절했습니다. {describe_action_plan(self.plan)}",
             view=self,
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -308,7 +305,7 @@ class AgentActionConfirmView(discord.ui.View):
         self._disable_buttons()
         await _edit_ai_message(
             self.response_message,
-            content=f"시간 초과로 취소했습니다.\n{describe_action_plan(self.plan)}",
+            content=f"시간 초과로 취소했습니다. {describe_action_plan(self.plan)}",
             view=self,
         )
 
