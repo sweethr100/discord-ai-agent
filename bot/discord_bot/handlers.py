@@ -146,6 +146,9 @@ async def handle_ai_request(
                     thinking_message=thinking_message,
                     interaction=interaction,
                     message=message,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    channel_context=channel_context,
                 )
                 return
 
@@ -219,6 +222,9 @@ async def _request_action_confirmation(
     thinking_message: discord.Message | discord.InteractionMessage,
     interaction: discord.Interaction | None,
     message: discord.Message | None,
+    prompt: str,
+    system_prompt: str,
+    channel_context: str,
 ) -> None:
     requester = interaction.user if interaction else message.author if message else None
     view = AgentActionConfirmView(
@@ -227,6 +233,9 @@ async def _request_action_confirmation(
         context=context,
         response_message=thinking_message,
         requester_id=requester.id if requester else 0,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        channel_context=channel_context,
     )
     content = describe_action_plan(plan)
     await _edit_ai_message(
@@ -283,6 +292,52 @@ async def _generate_validation_feedback(
     )
 
 
+async def _generate_rejection_feedback(
+    *,
+    bot: "DiscordAIBot",
+    prompt: str,
+    action_plan: ActionPlan,
+    system_prompt: str,
+    channel_context: str,
+) -> str:
+    messages: list[Message] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n"
+                "서버 관리 도구 호출 확인에서 사용자가 거절을 눌렀다. "
+                "해당 작업은 실행되지 않았음을 짧게 인정하고, 사용자의 원래 의도에 맞춰 "
+                "대안, 수정 요청 방법, 또는 다음에 할 수 있는 일을 간결하게 답하라. "
+                "새 도구 호출 JSON을 만들지 말고, 확인 버튼을 텍스트로 흉내 내지 마라."
+            ),
+        },
+    ]
+    if channel_context.strip():
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 사용자의 의도를 이해하는 데만 참고하라.\n"
+                    f"{channel_context.strip()}"
+                ),
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"사용자 원래 요청: {prompt}\n"
+                f"거절된 작업: {describe_action_plan(action_plan)}\n"
+                "상태: 사용자가 거절 버튼을 눌러 작업을 실행하지 않았다."
+            ),
+        }
+    )
+    return await bot.agent.provider.generate_response(
+        messages,
+        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+    )
+
+
 class AgentActionConfirmView(discord.ui.View):
     def __init__(
         self,
@@ -292,6 +347,9 @@ class AgentActionConfirmView(discord.ui.View):
         context: ActionContext,
         response_message: discord.Message | discord.InteractionMessage,
         requester_id: int,
+        prompt: str,
+        system_prompt: str,
+        channel_context: str,
     ) -> None:
         super().__init__(timeout=CONFIRMATION_TIMEOUT_SECONDS)
         self.bot = bot
@@ -299,6 +357,9 @@ class AgentActionConfirmView(discord.ui.View):
         self.context = context
         self.response_message = response_message
         self.requester_id = requester_id
+        self.prompt = prompt
+        self.system_prompt = system_prompt
+        self.channel_context = channel_context
         self.completed = False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -363,6 +424,25 @@ class AgentActionConfirmView(discord.ui.View):
             view=self,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+        try:
+            response = await _generate_rejection_feedback(
+                bot=self.bot,
+                prompt=self.prompt,
+                action_plan=self.plan,
+                system_prompt=self.system_prompt,
+                channel_context=self.channel_context,
+            )
+        except Exception:
+            logger.exception("Failed to generate rejection feedback: %s", self.plan.action)
+            await _send_followup_chunks_to_channel(
+                self.response_message,
+                [GENERIC_USER_ERROR],
+            )
+            self.stop()
+            return
+
+        chunks = split_discord_message(normalize_discord_markdown(response))
+        await _send_followup_chunks_to_channel(self.response_message, chunks)
         self.stop()
 
     async def on_timeout(self) -> None:
@@ -565,6 +645,24 @@ async def _send_response_chunks_to_message(
         return
 
     for chunk in chunks[1:]:
+        await channel.send(
+            chunk,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
+async def _send_followup_chunks_to_channel(
+    response_message: discord.Message | discord.InteractionMessage,
+    chunks: list[str],
+) -> None:
+    if not chunks:
+        chunks = ["응답이 비어 있어요."]
+
+    channel = getattr(response_message, "channel", None)
+    if channel is None:
+        return
+
+    for chunk in chunks:
         await channel.send(
             chunk,
             allowed_mentions=discord.AllowedMentions.none(),
