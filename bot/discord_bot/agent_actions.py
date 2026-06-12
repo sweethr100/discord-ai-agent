@@ -311,6 +311,55 @@ async def execute_agent_action(context: "ActionContext", plan: ActionPlan) -> st
 
 
 async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> str | None:
+    if plan.action in {
+        "member_kick",
+        "member_ban",
+        "member_timeout",
+        "member_nickname",
+        "member_move_voice",
+        "member_mute_voice",
+        "member_deafen_voice",
+        "member_disconnect_voice",
+        "role_add",
+        "role_remove",
+    }:
+        member = await _resolve_member(context, plan.args.get("member"))
+        if member is None:
+            requested = _human_target(plan.args.get("member"), fallback="대상 멤버")
+            return f"{requested} 멤버를 서버에서 찾지 못했어요."
+
+    if plan.action in {
+        "role_update",
+        "role_permissions_update",
+        "role_delete",
+        "role_add",
+        "role_remove",
+    }:
+        role = _resolve_role(context, plan.args.get("role"))
+        if role is None:
+            requested = _human_target(plan.args.get("role"), fallback="대상 역할")
+            return f"{requested} 역할을 서버에서 찾지 못했어요."
+
+    if plan.action in {
+        "autochannel_add",
+        "autochannel_remove",
+        "autochannel_mode",
+        "channel_update",
+        "channel_delete",
+        "channel_clone",
+        "channel_permission_set",
+        "invite_create",
+        "invite_list",
+        "message_purge",
+        "thread_create",
+        "webhook_create",
+        "webhook_list",
+    }:
+        channel = _resolve_guild_channel(context, plan.args.get("channel"))
+        if channel is None:
+            requested = _human_target(plan.args.get("channel"), fallback="대상 채널")
+            return f"{requested} 채널을 서버에서 찾지 못했어요."
+
     if plan.action == "member_move_voice":
         member = await _resolve_member(context, plan.args.get("member"))
         if member is None:

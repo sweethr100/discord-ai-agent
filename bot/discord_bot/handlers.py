@@ -18,7 +18,7 @@ from discord_bot.agent_actions import (
 )
 from discord_bot.channel_context import build_channel_context
 from discord_bot.settings_store import AutoChannelSettings
-from providers.base import ProviderHTTPStatusError, ProviderQuotaError
+from providers.base import Message, ProviderHTTPStatusError, ProviderOptions, ProviderQuotaError
 from utils.discord_markdown import normalize_discord_markdown
 from utils.logger import get_logger
 from utils.split_message import split_discord_message
@@ -89,6 +89,12 @@ async def handle_ai_request(
         user_id = _get_user_id(interaction, message)
         channel_id = _get_channel_id(interaction, message)
         guild_id = _get_guild_id(interaction, message)
+        effective_style = style_name or bot.settings.get_default_style(guild_id)
+        system_prompt = build_system_prompt(
+            base_prompt=bot.config.system_prompt,
+            style=effective_style,
+            custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
+        )
         channel_context = await build_channel_context(
             interaction=interaction,
             message=message,
@@ -115,10 +121,20 @@ async def handle_ai_request(
             )
             validation_error = await validate_action_plan(action_context, action_plan)
             if validation_error:
-                await _replace_thinking_message(
+                validation_response = await _generate_validation_feedback(
+                    bot=bot,
+                    prompt=prompt,
+                    action_plan=action_plan,
+                    validation_error=validation_error,
+                    system_prompt=system_prompt,
+                    channel_context=channel_context,
+                )
+                chunks = split_discord_message(normalize_discord_markdown(validation_response))
+                await _send_response_chunks(
+                    chunks,
                     thinking_message=thinking_message,
-                    content=validation_error,
                     interaction=interaction,
+                    message=message,
                 )
                 return
 
@@ -143,12 +159,6 @@ async def handle_ai_request(
             )
             return
 
-        effective_style = style_name or bot.settings.get_default_style(guild_id)
-        system_prompt = build_system_prompt(
-            base_prompt=bot.config.system_prompt,
-            style=effective_style,
-            custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
-        )
         response = await bot.agent.run(
             prompt,
             user_id=user_id,
@@ -223,6 +233,53 @@ async def _request_action_confirmation(
         thinking_message,
         content=content,
         view=view,
+    )
+
+
+async def _generate_validation_feedback(
+    *,
+    bot: "DiscordAIBot",
+    prompt: str,
+    action_plan: ActionPlan,
+    validation_error: str,
+    system_prompt: str,
+    channel_context: str,
+) -> str:
+    messages: list[Message] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n"
+                "서버 관리 도구 호출이 실행 전 검증에서 실패했다. "
+                "사용자에게 확인 버튼을 띄우지 말고, 왜 지금 실행할 수 없는지 짧게 말한 뒤 "
+                "필요한 대상/채널/권한/상태 정보를 한 문장으로 다시 요청하라. "
+                "도구 호출 JSON, 내부 action 이름, args 키 이름은 말하지 마라."
+            ),
+        },
+    ]
+    if channel_context.strip():
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 사용자가 무엇을 하려 했는지 이해하는 데만 참고하라.\n"
+                    f"{channel_context.strip()}"
+                ),
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"사용자 요청: {prompt}\n"
+                f"요청된 작업: {describe_action_plan(action_plan)}\n"
+                f"검증 실패 이유: {validation_error}"
+            ),
+        }
+    )
+    return await bot.agent.provider.generate_response(
+        messages,
+        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
     )
 
 
