@@ -9,6 +9,7 @@ from agent.styles import build_system_prompt
 from discord_bot.agent_actions import try_handle_agent_action
 from discord_bot.settings_store import AutoChannelSettings
 from providers.base import ProviderHTTPStatusError, ProviderQuotaError
+from utils.discord_markdown import normalize_discord_markdown
 from utils.logger import get_logger
 from utils.split_message import split_discord_message
 
@@ -85,7 +86,7 @@ async def handle_ai_request(
             status_callback=update_action_status,
         )
         if action_response is not None:
-            chunks = split_discord_message(action_response)
+            chunks = split_discord_message(normalize_discord_markdown(action_response))
             await _send_response_chunks(
                 chunks,
                 thinking_message=thinking_message,
@@ -107,7 +108,7 @@ async def handle_ai_request(
             source=source,
             system_prompt=system_prompt,
         )
-        chunks = split_discord_message(response)
+        chunks = split_discord_message(normalize_discord_markdown(response))
         await _send_response_chunks(
             chunks,
             thinking_message=thinking_message,
