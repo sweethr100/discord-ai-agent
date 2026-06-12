@@ -301,11 +301,89 @@ def action_requires_confirmation(plan: ActionPlan) -> bool:
 
 
 def describe_action_plan(plan: ActionPlan) -> str:
+    natural_summary = _natural_action_summary(plan)
+    if natural_summary:
+        return natural_summary
+
     label = _action_label(plan.action)
     args = _format_action_args(plan.args)
     if not args:
-        return f"작업 내용: **{label}**"
-    return f"작업 내용: **{label}** / {args}"
+        return label
+    return f"{label}: {args}"
+
+
+def _natural_action_summary(plan: ActionPlan) -> str:
+    args = plan.args
+
+    if plan.action == "member_timeout":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        minutes = _optional_int(args.get("duration_minutes"))
+        if minutes is None or minutes <= 0:
+            return f"{member} 님의 타임아웃 해제"
+        return f"{member} 님에게 {minutes}분 타임아웃 적용"
+
+    if plan.action == "member_kick":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        return f"{member} 님 추방"
+
+    if plan.action == "member_ban":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        return f"{member} 님 차단"
+
+    if plan.action == "member_unban":
+        user = _human_target(args.get("user"), fallback="대상 사용자")
+        return f"{user} 님 차단 해제"
+
+    if plan.action == "member_nickname":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        nickname = str(args.get("nickname") or "없음").strip()
+        return f"{member} 님 별명을 {nickname}(으)로 변경"
+
+    if plan.action == "role_add":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        role = _human_target(args.get("role"), fallback="대상 역할")
+        return f"{member} 님에게 {role} 역할 추가"
+
+    if plan.action == "role_remove":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        role = _human_target(args.get("role"), fallback="대상 역할")
+        return f"{member} 님에게서 {role} 역할 제거"
+
+    if plan.action == "channel_create":
+        name = _human_target(args.get("name"), fallback="새 채널")
+        channel_type = _human_target(args.get("type"), fallback="채널")
+        return f"{name} {channel_type} 채널 생성"
+
+    if plan.action == "channel_delete":
+        channel = _human_target(args.get("channel"), fallback="대상 채널")
+        return f"{channel} 채널 삭제"
+
+    if plan.action == "channel_update":
+        channel = _human_target(args.get("channel"), fallback="대상 채널")
+        return f"{channel} 채널 설정 변경"
+
+    if plan.action == "role_create":
+        name = _human_target(args.get("name"), fallback="새 역할")
+        return f"{name} 역할 생성"
+
+    if plan.action == "role_update":
+        role = _human_target(args.get("role"), fallback="대상 역할")
+        return f"{role} 역할 설정 변경"
+
+    if plan.action == "role_delete":
+        role = _human_target(args.get("role"), fallback="대상 역할")
+        return f"{role} 역할 삭제"
+
+    return ""
+
+
+def _human_target(value: Any, *, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    if len(text) <= 80:
+        return text
+    return f"{text[:79]}..."
 
 
 def _rule_based_action_plan(prompt: str) -> ActionPlan | None:
@@ -556,11 +634,11 @@ def _format_action_args(args: dict[str, Any]) -> str:
         if value is None or value == "" or value == []:
             continue
         rendered = _shorten_arg_value(value)
-        parts.append(f"`{key}`={rendered}")
+        parts.append(rendered)
         if len(parts) >= 8:
             parts.append("...")
             break
-    return " / ".join(parts)
+    return ", ".join(parts)
 
 
 def _shorten_arg_value(value: Any, *, limit: int = 120) -> str:
