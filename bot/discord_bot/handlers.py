@@ -88,7 +88,13 @@ async def handle_ai_request(
         user_id = _get_user_id(interaction, message)
         channel_id = _get_channel_id(interaction, message)
         guild_id = _get_guild_id(interaction, message)
-        action_plan = await plan_agent_action(bot, prompt)
+        channel_context = await build_channel_context(
+            interaction=interaction,
+            message=message,
+            limit=bot.config.channel_context_messages,
+            char_limit=bot.config.channel_context_char_limit,
+        )
+        action_plan = await plan_agent_action(bot, prompt, channel_context=channel_context)
         if action_plan is not None:
             guild = interaction.guild if interaction else message.guild if message else None
             if guild is None:
@@ -132,12 +138,6 @@ async def handle_ai_request(
             base_prompt=bot.config.system_prompt,
             style=effective_style,
             custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
-        )
-        channel_context = await build_channel_context(
-            interaction=interaction,
-            message=message,
-            limit=bot.config.channel_context_messages,
-            char_limit=bot.config.channel_context_char_limit,
         )
         response = await bot.agent.run(
             prompt,

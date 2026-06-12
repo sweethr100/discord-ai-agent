@@ -184,6 +184,7 @@ ACTION_STATUS_LABELS = {
     "member_ban": "멤버 차단",
     "member_unban": "멤버 차단 해제",
     "member_timeout": "멤버 타임아웃",
+    "member_timeout_duration_needed": "타임아웃 기간 확인",
     "member_nickname": "멤버 별명 변경",
     "member_move_voice": "음성 멤버 이동",
     "member_mute_voice": "음성 멤버 음소거",
@@ -227,6 +228,7 @@ READ_ONLY_ACTIONS = {
     "integration_list",
     "ban_list",
     "vanity_invite_show",
+    "member_timeout_duration_needed",
 }
 
 
@@ -263,12 +265,17 @@ async def try_handle_agent_action(
     return await execute_agent_action(context, plan)
 
 
-async def plan_agent_action(bot: "DiscordAIBot", prompt: str) -> ActionPlan | None:
-    rule_plan = _rule_based_action_plan(prompt)
+async def plan_agent_action(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    channel_context: str = "",
+) -> ActionPlan | None:
+    rule_plan = _rule_based_action_plan(prompt, channel_context=channel_context)
     if rule_plan is not None:
         return rule_plan
 
-    plan = await _plan_action(bot, prompt)
+    plan = await _plan_action(bot, prompt, channel_context=channel_context)
     if plan is None or plan.action == "none" or plan.confidence < 0.65:
         return None
     return plan
@@ -386,7 +393,7 @@ def _human_target(value: Any, *, fallback: str) -> str:
     return f"{text[:79]}..."
 
 
-def _rule_based_action_plan(prompt: str) -> ActionPlan | None:
+def _rule_based_action_plan(prompt: str, *, channel_context: str = "") -> ActionPlan | None:
     text = " ".join(prompt.strip().split())
     if not text:
         return None
@@ -394,8 +401,6 @@ def _rule_based_action_plan(prompt: str) -> ActionPlan | None:
     if _contains_any(text, "타임아웃", "타임 아웃", "timeout", "채팅금지", "채팅 금지"):
         duration = _extract_duration_minutes(text)
         is_clear = _contains_any(text, "해제", "풀어", "풀어줘", "취소")
-        if duration is None and not is_clear:
-            return None
 
         member = _extract_member_query_from_request(
             text,
@@ -407,6 +412,12 @@ def _rule_based_action_plan(prompt: str) -> ActionPlan | None:
         )
         if not member:
             return None
+        if duration is None and not is_clear:
+            return ActionPlan(
+                action="member_timeout_duration_needed",
+                args={"member": member},
+                confidence=0.95,
+            )
 
         args: dict[str, Any] = {
             "member": member,
@@ -451,7 +462,67 @@ def _rule_based_action_plan(prompt: str) -> ActionPlan | None:
             args["reason"] = reason
         return ActionPlan(action="member_ban", args=args, confidence=0.92)
 
+    context_plan = _rule_based_context_action_plan(text, channel_context)
+    if context_plan is not None:
+        return context_plan
+
     return None
+
+
+def _rule_based_context_action_plan(prompt: str, channel_context: str) -> ActionPlan | None:
+    if not channel_context:
+        return None
+
+    duration = _extract_duration_minutes(prompt)
+    is_clear = _contains_any(prompt, "해제", "풀어", "풀어줘", "취소")
+    if duration is None and not is_clear:
+        return None
+    if not _looks_like_action_continuation(prompt):
+        return None
+
+    for previous_prompt in reversed(_recent_user_messages(channel_context)):
+        if not _contains_any(previous_prompt, "타임아웃", "타임 아웃", "timeout", "채팅금지", "채팅 금지"):
+            continue
+        member = _extract_member_query_from_request(
+            previous_prompt,
+            action_patterns=(
+                r"타임\s*아웃",
+                r"timeout",
+                r"채팅\s*금지",
+            ),
+        )
+        if not member:
+            continue
+
+        args: dict[str, Any] = {
+            "member": member,
+            "duration_minutes": 0 if is_clear else duration,
+        }
+        reason = _extract_reason(prompt) or _extract_reason(previous_prompt)
+        if reason:
+            args["reason"] = reason
+        return ActionPlan(action="member_timeout", args=args, confidence=0.9)
+
+    return None
+
+
+def _looks_like_action_continuation(prompt: str) -> bool:
+    text = prompt.casefold()
+    if _contains_any(text, "해줘", "해주세요", "걸어줘", "적용", "처리", "그렇게", "ㅇㅋ", "ok", "yes"):
+        return True
+    return bool(_extract_duration_minutes(prompt) or _contains_any(text, "해제", "풀어", "취소"))
+
+
+def _recent_user_messages(channel_context: str) -> list[str]:
+    messages: list[str] = []
+    for line in channel_context.splitlines():
+        match = re.match(r"^\[[^\]]+\]\s+.+?(?P<bot>\sbot)?:\s*(?P<content>.*)$", line)
+        if not match or match.group("bot"):
+            continue
+        content = match.group("content").strip()
+        if content:
+            messages.append(content)
+    return messages[-8:]
 
 
 def _contains_any(text: str, *needles: str) -> bool:
@@ -569,11 +640,27 @@ class BinaryAsset:
     filename: str
 
 
-async def _plan_action(bot: "DiscordAIBot", prompt: str) -> ActionPlan | None:
+async def _plan_action(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    channel_context: str = "",
+) -> ActionPlan | None:
     messages: list[Message] = [
         {"role": "system", "content": ACTION_PLANNER_PROMPT},
-        {"role": "user", "content": prompt},
     ]
+    if channel_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라. "
+                    "과거 메시지만으로 새 작업을 실행하지 마라.\n"
+                    f"{channel_context}"
+                ),
+            }
+        )
+    messages.append({"role": "user", "content": f"현재 요청: {prompt}"})
     raw = await bot.agent.provider.generate_response(
         messages,
         ProviderOptions(temperature=0.0, max_tokens=800),
@@ -778,6 +865,8 @@ async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
         result = await _member_unban(context, args)
     elif action == "member_timeout":
         result = await _member_timeout(context, args)
+    elif action == "member_timeout_duration_needed":
+        result = _member_timeout_duration_needed(args)
     elif action == "member_nickname":
         result = await _member_nickname(context, args)
     elif action == "member_move_voice":
@@ -2256,6 +2345,11 @@ async def _member_timeout(context: ActionContext, args: dict[str, Any]) -> str:
     if until is None:
         return f"{member.mention} 멤버의 타임아웃을 해제했어요."
     return f"{member.mention} 멤버에게 {minutes}분 타임아웃을 적용했어요."
+
+
+def _member_timeout_duration_needed(args: dict[str, Any]) -> str:
+    member = _human_target(args.get("member"), fallback="대상 멤버")
+    return f"{member} 님에게 적용할 시간을 알려주세요. 예: 120분 해줘"
 
 
 async def _member_nickname(context: ActionContext, args: dict[str, Any]) -> str:
