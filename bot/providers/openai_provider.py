@@ -65,6 +65,6 @@ def _extract_openai_content(data: dict[str, Any]) -> str:
 
     content = content.strip()
     if first_choice.get("finish_reason") == "length":
-        content += "\n\n[답변이 AI_MAX_TOKENS 제한 때문에 중간에 멈췄어요. 더 길게 보려면 .env의 AI_MAX_TOKENS 값을 올린 뒤 봇을 재시작하세요.]"
+        content += "\n\n[답변이 출력 길이 한도 때문에 중간에 멈췄어요. AI_MAX_TOKENS를 직접 설정했다면 값을 비우거나 더 크게 조정하세요.]"
 
     return content

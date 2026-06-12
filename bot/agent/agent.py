@@ -12,7 +12,7 @@ class AIAgent:
         provider: AIProvider,
         system_prompt: str,
         temperature: float,
-        max_tokens: int,
+        max_tokens: int | None,
         tools: ToolRegistry | None = None,
     ) -> None:
         self.provider = provider

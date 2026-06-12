@@ -46,7 +46,7 @@ class AppConfig:
     ai_provider: str
     system_prompt: str
     ai_temperature: float
-    ai_max_tokens: int
+    ai_max_tokens: int | None
     request_timeout_seconds: float
     openai_api_key: str
     openai_model: str
@@ -68,7 +68,7 @@ class AppConfig:
                 f"AI_PROVIDER 값은 {supported} 중 하나여야 합니다. 현재 값: {self.ai_provider!r}"
             )
 
-        if self.ai_max_tokens <= 0:
+        if self.ai_max_tokens is not None and self.ai_max_tokens <= 0:
             raise ConfigError("AI_MAX_TOKENS 값은 1 이상이어야 합니다.")
 
         if self.request_timeout_seconds <= 0:
@@ -109,7 +109,7 @@ def load_config() -> AppConfig:
         ai_provider=provider,
         system_prompt=_get_env("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
         ai_temperature=_get_float("AI_TEMPERATURE", 0.7),
-        ai_max_tokens=_get_optional_int("AI_MAX_TOKENS") or 4096,
+        ai_max_tokens=_get_optional_int("AI_MAX_TOKENS"),
         request_timeout_seconds=_get_float("REQUEST_TIMEOUT_SECONDS", 60.0),
         openai_api_key=_get_env("OPENAI_API_KEY"),
         openai_model=_get_env("OPENAI_MODEL", "gpt-4o-mini"),

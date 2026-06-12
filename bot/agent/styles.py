@@ -69,6 +69,11 @@ STYLE_PRESETS: dict[str, StylePreset] = {
 }
 
 STYLE_NAMES = tuple(STYLE_PRESETS.keys())
+CONCISE_RESPONSE_GUIDE = (
+    "공통 답변 지침: 기본 답변은 3~6문장 또는 짧은 목록으로 끝내라. "
+    "장황한 서론, 과한 꾸밈말, 불필요한 반복은 줄이고 핵심과 다음 행동만 말하라. "
+    "사용자가 '자세히', '길게', '단계별로' 요청한 경우에만 길게 답하라."
+)
 
 
 def is_valid_style(style: str) -> bool:
@@ -85,13 +90,14 @@ def build_system_prompt(
     style = style if is_valid_style(style) else "default"
 
     if style == "custom":
-        return append_self_manual(custom_prompt.strip() or base_prompt)
+        custom_base = custom_prompt.strip() or base_prompt
+        return append_self_manual(f"{custom_base}\n\n{CONCISE_RESPONSE_GUIDE}")
 
     preset = STYLE_PRESETS[style]
     if not preset.prompt:
-        return append_self_manual(base_prompt)
+        return append_self_manual(f"{base_prompt}\n\n{CONCISE_RESPONSE_GUIDE}")
 
-    return append_self_manual(f"{base_prompt}\n\n응답 스타일 지침:\n{preset.prompt}")
+    return append_self_manual(f"{base_prompt}\n\n{CONCISE_RESPONSE_GUIDE}\n\n응답 스타일 지침:\n{preset.prompt}")
 
 
 def format_style_presets() -> str:

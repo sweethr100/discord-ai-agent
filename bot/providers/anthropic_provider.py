@@ -5,6 +5,9 @@ from typing import Any, Sequence
 from providers.base import HttpProvider, Message, ProviderOptions, ProviderResponseError
 
 
+ANTHROPIC_FALLBACK_MAX_TOKENS = 8192
+
+
 class AnthropicProvider(HttpProvider):
     def __init__(
         self,
@@ -28,7 +31,9 @@ class AnthropicProvider(HttpProvider):
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": anthropic_messages,
-            "max_tokens": options.max_tokens or 1024,
+            # Anthropic Messages API requires max_tokens. Other providers can omit
+            # this when AI_MAX_TOKENS is unset, but Claude needs a compatibility value.
+            "max_tokens": options.max_tokens or ANTHROPIC_FALLBACK_MAX_TOKENS,
         }
 
         if system_prompt:
@@ -94,6 +99,6 @@ def _extract_anthropic_content(data: dict[str, Any]) -> str:
         raise ProviderResponseError("Anthropic response content was empty.")
 
     if data.get("stop_reason") == "max_tokens":
-        text += "\n\n[답변이 AI_MAX_TOKENS 제한 때문에 중간에 멈췄어요. 더 길게 보려면 .env의 AI_MAX_TOKENS 값을 올린 뒤 봇을 재시작하세요.]"
+        text += "\n\n[답변이 출력 길이 한도 때문에 중간에 멈췄어요. AI_MAX_TOKENS를 직접 설정했다면 값을 비우거나 더 크게 조정하세요.]"
 
     return text
