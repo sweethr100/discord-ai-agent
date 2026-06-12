@@ -208,12 +208,9 @@ async def _request_action_confirmation(
         response_message=thinking_message,
         requester_id=requester.id if requester else 0,
     )
-    requester_label = requester.mention if requester else "알 수 없음"
     content = (
-        "관리 작업 실행 확인\n"
-        f"{describe_action_plan(plan)}\n\n"
-        f"요청자: {requester_label}\n"
-        "수락을 누르면 바로 실행하고, 거절을 누르면 취소합니다."
+        "실행할까요?\n"
+        f"{describe_action_plan(plan)}"
     )
     await _edit_ai_message(
         thinking_message,
@@ -260,7 +257,7 @@ class AgentActionConfirmView(discord.ui.View):
         self.completed = True
         self._disable_buttons()
         await interaction.response.edit_message(
-            content=f"{describe_action_plan(self.plan)}\n\n수락했습니다. 실행을 시작합니다.",
+            content=f"실행 중...\n{describe_action_plan(self.plan)}",
             view=self,
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -298,7 +295,7 @@ class AgentActionConfirmView(discord.ui.View):
         self.completed = True
         self._disable_buttons()
         await interaction.response.edit_message(
-            content=f"{describe_action_plan(self.plan)}\n\n거절했습니다. 작업을 실행하지 않았어요.",
+            content=f"거절했습니다.\n{describe_action_plan(self.plan)}",
             view=self,
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -311,7 +308,7 @@ class AgentActionConfirmView(discord.ui.View):
         self._disable_buttons()
         await _edit_ai_message(
             self.response_message,
-            content=f"{describe_action_plan(self.plan)}\n\n시간이 지나 작업을 실행하지 않았어요.",
+            content=f"시간 초과로 취소했습니다.\n{describe_action_plan(self.plan)}",
             view=self,
         )
 

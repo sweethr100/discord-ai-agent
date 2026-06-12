@@ -264,6 +264,10 @@ async def try_handle_agent_action(
 
 
 async def plan_agent_action(bot: "DiscordAIBot", prompt: str) -> ActionPlan | None:
+    rule_plan = _rule_based_action_plan(prompt)
+    if rule_plan is not None:
+        return rule_plan
+
     plan = await _plan_action(bot, prompt)
     if plan is None or plan.action == "none" or plan.confidence < 0.65:
         return None
@@ -302,6 +306,173 @@ def describe_action_plan(plan: ActionPlan) -> str:
     if not args:
         return f"작업: **{label}**"
     return f"작업: **{label}**\n{args}"
+
+
+def _rule_based_action_plan(prompt: str) -> ActionPlan | None:
+    text = " ".join(prompt.strip().split())
+    if not text:
+        return None
+
+    if _contains_any(text, "타임아웃", "타임 아웃", "timeout", "채팅금지", "채팅 금지"):
+        duration = _extract_duration_minutes(text)
+        is_clear = _contains_any(text, "해제", "풀어", "풀어줘", "취소")
+        if duration is None and not is_clear:
+            return None
+
+        member = _extract_member_query_from_request(
+            text,
+            action_patterns=(
+                r"타임\s*아웃",
+                r"timeout",
+                r"채팅\s*금지",
+            ),
+        )
+        if not member:
+            return None
+
+        args: dict[str, Any] = {
+            "member": member,
+            "duration_minutes": 0 if is_clear else duration,
+        }
+        reason = _extract_reason(text)
+        if reason:
+            args["reason"] = reason
+        return ActionPlan(action="member_timeout", args=args, confidence=0.95)
+
+    if _contains_any(text, "추방", "킥", "kick"):
+        member = _extract_member_query_from_request(
+            text,
+            action_patterns=(
+                r"추방",
+                r"킥",
+                r"kick",
+            ),
+        )
+        if not member:
+            return None
+        args = {"member": member}
+        reason = _extract_reason(text)
+        if reason:
+            args["reason"] = reason
+        return ActionPlan(action="member_kick", args=args, confidence=0.92)
+
+    if _contains_any(text, "차단", "밴", "ban") and not _contains_any(text, "해제", "풀어"):
+        member = _extract_member_query_from_request(
+            text,
+            action_patterns=(
+                r"차단",
+                r"밴",
+                r"ban",
+            ),
+        )
+        if not member:
+            return None
+        args = {"member": member}
+        reason = _extract_reason(text)
+        if reason:
+            args["reason"] = reason
+        return ActionPlan(action="member_ban", args=args, confidence=0.92)
+
+    return None
+
+
+def _contains_any(text: str, *needles: str) -> bool:
+    normalized = text.casefold()
+    return any(needle.casefold() in normalized for needle in needles)
+
+
+def _extract_duration_minutes(text: str) -> int | None:
+    match = re.search(
+        r"(?P<number>\d+)\s*(?P<unit>초|분|시간|일|주|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        amount = int(match.group("number"))
+        return _duration_to_minutes(amount, match.group("unit"))
+
+    korean_numbers = {
+        "한": 1,
+        "두": 2,
+        "세": 3,
+        "네": 4,
+        "다섯": 5,
+        "여섯": 6,
+        "일곱": 7,
+        "여덟": 8,
+        "아홉": 9,
+        "열": 10,
+    }
+    match = re.search(
+        r"(?P<number>한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?P<unit>분|시간|일|주)",
+        text,
+    )
+    if match:
+        return _duration_to_minutes(korean_numbers[match.group("number")], match.group("unit"))
+
+    return None
+
+
+def _duration_to_minutes(amount: int, unit: str) -> int:
+    normalized = unit.casefold()
+    if normalized in {"초", "second", "seconds", "sec", "secs"}:
+        return max(1, (amount + 59) // 60)
+    if normalized in {"분", "minute", "minutes", "min", "mins"}:
+        return amount
+    if normalized in {"시간", "hour", "hours", "hr", "hrs"}:
+        return amount * 60
+    if normalized in {"일", "day", "days"}:
+        return amount * 24 * 60
+    if normalized in {"주", "week", "weeks"}:
+        return amount * 7 * 24 * 60
+    return amount
+
+
+def _extract_member_query_from_request(text: str, *, action_patterns: tuple[str, ...]) -> str:
+    member_mentions = re.findall(r"<@!?\d{15,25}>", text)
+    if member_mentions:
+        return member_mentions[0]
+
+    cleaned = text
+    cleaned = re.sub(
+        r"(?:사유|이유|reason)\s*[:=]?\s*.+$",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\d+\s*(?:초|분|시간|일|주|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?)",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?:분|시간|일|주)", " ", cleaned)
+
+    for pattern in action_patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(
+        r"(?:좀|제발|바로|빨리|적용|처리|실행|해줘|해주세요|해라|걸어줘|시켜줘|"
+        r"해제|풀어줘|풀어|취소|그\s*사람|이\s*사람|저\s*사람|걔|쟤|얘)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(r"[`*_~>|\\[\](){}:;,!?]", " ", cleaned)
+    tokens = []
+    for token in cleaned.split():
+        token = token.strip("@ ")
+        token = re.sub(r"(?:님|씨|에게|한테|으로|로|을|를)$", "", token)
+        if token and token not in {"좀", "제발", "바로", "빨리"}:
+            tokens.append(token)
+    cleaned = " ".join(tokens)
+    return cleaned[:100]
+
+
+def _extract_reason(text: str) -> str:
+    match = re.search(r"(?:사유|이유|reason)\s*[:=]?\s*(.+)$", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return " ".join(match.group(1).split())[:512]
 
 
 @dataclass
