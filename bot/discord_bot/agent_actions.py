@@ -20,11 +20,15 @@ if TYPE_CHECKING:
 
 
 ACTION_PLANNER_PROMPT = """\
-너는 Discord AI Agent Bot의 자연어 도구 라우터다.
-사용자 메시지가 봇 자체 설정 또는 Discord 서버 관리 실행 요청이면 JSON만 출력하라.
+너는 Discord AI Agent Bot의 서버 관리 도구 호출 컨트롤러다.
+사용자 메시지가 봇 자체 설정 또는 Discord 서버 관리 실행 요청이면 실행할 도구 호출을 JSON으로 요청하라.
 일반 질문, 설명 요청, 잡담, 코딩 질문이면 {"action":"none","args":{},"confidence":0}를 출력하라.
+반드시 JSON 객체 하나만 출력하라. 설명 문장, Markdown, 코드블록은 출력하지 마라.
 
-지원 action:
+출력 형식:
+{"action":"도구_이름","args":{"필요한_인자":"값"},"confidence":0.0}
+
+지원 도구 action:
 - autochannel_add: args channel, mode, keywords
 - autochannel_remove: args channel
 - autochannel_list: args
@@ -76,6 +80,7 @@ ACTION_PLANNER_PROMPT = """\
 - member_ban: args member, reason, delete_message_days
 - member_unban: args user, reason
 - member_timeout: args member, duration_minutes, reason
+- member_timeout_duration_needed: args member
 - member_nickname: args member, nickname
 - member_move_voice: args member, channel
 - member_mute_voice: args member, muted
@@ -106,9 +111,13 @@ ACTION_PLANNER_PROMPT = """\
 - none: args
 
 규칙:
-- 실행 요청이 명확할 때만 action을 선택하라.
+- 실행 요청이 명확할 때만 도구 action을 선택하라.
 - "설정법 알려줘", "명령어 뭐야", "할 수 있어?" 같은 설명 요청은 none이다.
 - 삭제, 차단, 추방, 대량 삭제 같은 파괴적 작업은 사용자가 명확히 실행을 요청한 경우에만 선택하라.
+- 최근 채널 대화 문맥은 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라.
+- 현재 요청이 "120분 해줘", "해제해줘", "그렇게 해줘"처럼 이전 서버 관리 요청의 누락 정보를 보충하는 말이면, 최근 문맥의 해당 요청과 합쳐 하나의 도구 action을 선택하라.
+- 과거 메시지만으로 새 작업을 실행하지 마라. 반드시 현재 요청에 실행 의도가 있어야 한다.
+- member_timeout에 대상은 있지만 duration_minutes가 없고 해제 요청도 아니면 member_timeout_duration_needed를 선택하라.
 - channel/member/role/thread/forum/emoji/sticker/sound/event/webhook/integration은 Discord mention 또는 ID가 있으면 그대로 넣어라. 예: <#123>, <@456>, <@&789>.
 - member가 멘션이나 ID가 아니어도 사용자가 말한 별명, 표시 이름, 유저명을 문자열 그대로 넣어라.
 - 현재 채널을 뜻하면 channel을 "current"로 넣어라.
@@ -231,6 +240,8 @@ READ_ONLY_ACTIONS = {
     "member_timeout_duration_needed",
 }
 
+SUPPORTED_ACTIONS = set(ACTION_STATUS_LABELS) | {"none"}
+
 
 @dataclass(frozen=True)
 class ActionPlan:
@@ -271,10 +282,6 @@ async def plan_agent_action(
     *,
     channel_context: str = "",
 ) -> ActionPlan | None:
-    rule_plan = _rule_based_action_plan(prompt, channel_context=channel_context)
-    if rule_plan is not None:
-        return rule_plan
-
     plan = await _plan_action(bot, prompt, channel_context=channel_context)
     if plan is None or plan.action == "none" or plan.confidence < 0.65:
         return None
@@ -393,237 +400,6 @@ def _human_target(value: Any, *, fallback: str) -> str:
     return f"{text[:79]}..."
 
 
-def _rule_based_action_plan(prompt: str, *, channel_context: str = "") -> ActionPlan | None:
-    text = " ".join(prompt.strip().split())
-    if not text:
-        return None
-
-    if _contains_any(text, "타임아웃", "타임 아웃", "timeout", "채팅금지", "채팅 금지"):
-        duration = _extract_duration_minutes(text)
-        is_clear = _contains_any(text, "해제", "풀어", "풀어줘", "취소")
-
-        member = _extract_member_query_from_request(
-            text,
-            action_patterns=(
-                r"타임\s*아웃",
-                r"timeout",
-                r"채팅\s*금지",
-            ),
-        )
-        if not member:
-            return None
-        if duration is None and not is_clear:
-            return ActionPlan(
-                action="member_timeout_duration_needed",
-                args={"member": member},
-                confidence=0.95,
-            )
-
-        args: dict[str, Any] = {
-            "member": member,
-            "duration_minutes": 0 if is_clear else duration,
-        }
-        reason = _extract_reason(text)
-        if reason:
-            args["reason"] = reason
-        return ActionPlan(action="member_timeout", args=args, confidence=0.95)
-
-    if _contains_any(text, "추방", "킥", "kick"):
-        member = _extract_member_query_from_request(
-            text,
-            action_patterns=(
-                r"추방",
-                r"킥",
-                r"kick",
-            ),
-        )
-        if not member:
-            return None
-        args = {"member": member}
-        reason = _extract_reason(text)
-        if reason:
-            args["reason"] = reason
-        return ActionPlan(action="member_kick", args=args, confidence=0.92)
-
-    if _contains_any(text, "차단", "밴", "ban") and not _contains_any(text, "해제", "풀어"):
-        member = _extract_member_query_from_request(
-            text,
-            action_patterns=(
-                r"차단",
-                r"밴",
-                r"ban",
-            ),
-        )
-        if not member:
-            return None
-        args = {"member": member}
-        reason = _extract_reason(text)
-        if reason:
-            args["reason"] = reason
-        return ActionPlan(action="member_ban", args=args, confidence=0.92)
-
-    context_plan = _rule_based_context_action_plan(text, channel_context)
-    if context_plan is not None:
-        return context_plan
-
-    return None
-
-
-def _rule_based_context_action_plan(prompt: str, channel_context: str) -> ActionPlan | None:
-    if not channel_context:
-        return None
-
-    duration = _extract_duration_minutes(prompt)
-    is_clear = _contains_any(prompt, "해제", "풀어", "풀어줘", "취소")
-    if duration is None and not is_clear:
-        return None
-    if not _looks_like_action_continuation(prompt):
-        return None
-
-    for previous_prompt in reversed(_recent_user_messages(channel_context)):
-        if not _contains_any(previous_prompt, "타임아웃", "타임 아웃", "timeout", "채팅금지", "채팅 금지"):
-            continue
-        member = _extract_member_query_from_request(
-            previous_prompt,
-            action_patterns=(
-                r"타임\s*아웃",
-                r"timeout",
-                r"채팅\s*금지",
-            ),
-        )
-        if not member:
-            continue
-
-        args: dict[str, Any] = {
-            "member": member,
-            "duration_minutes": 0 if is_clear else duration,
-        }
-        reason = _extract_reason(prompt) or _extract_reason(previous_prompt)
-        if reason:
-            args["reason"] = reason
-        return ActionPlan(action="member_timeout", args=args, confidence=0.9)
-
-    return None
-
-
-def _looks_like_action_continuation(prompt: str) -> bool:
-    text = prompt.casefold()
-    if _contains_any(text, "해줘", "해주세요", "걸어줘", "적용", "처리", "그렇게", "ㅇㅋ", "ok", "yes"):
-        return True
-    return bool(_extract_duration_minutes(prompt) or _contains_any(text, "해제", "풀어", "취소"))
-
-
-def _recent_user_messages(channel_context: str) -> list[str]:
-    messages: list[str] = []
-    for line in channel_context.splitlines():
-        match = re.match(r"^\[[^\]]+\]\s+.+?(?P<bot>\sbot)?:\s*(?P<content>.*)$", line)
-        if not match or match.group("bot"):
-            continue
-        content = match.group("content").strip()
-        if content:
-            messages.append(content)
-    return messages[-8:]
-
-
-def _contains_any(text: str, *needles: str) -> bool:
-    normalized = text.casefold()
-    return any(needle.casefold() in normalized for needle in needles)
-
-
-def _extract_duration_minutes(text: str) -> int | None:
-    match = re.search(
-        r"(?P<number>\d+)\s*(?P<unit>초|분|시간|일|주|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?)",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        amount = int(match.group("number"))
-        return _duration_to_minutes(amount, match.group("unit"))
-
-    korean_numbers = {
-        "한": 1,
-        "두": 2,
-        "세": 3,
-        "네": 4,
-        "다섯": 5,
-        "여섯": 6,
-        "일곱": 7,
-        "여덟": 8,
-        "아홉": 9,
-        "열": 10,
-    }
-    match = re.search(
-        r"(?P<number>한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?P<unit>분|시간|일|주)",
-        text,
-    )
-    if match:
-        return _duration_to_minutes(korean_numbers[match.group("number")], match.group("unit"))
-
-    return None
-
-
-def _duration_to_minutes(amount: int, unit: str) -> int:
-    normalized = unit.casefold()
-    if normalized in {"초", "second", "seconds", "sec", "secs"}:
-        return max(1, (amount + 59) // 60)
-    if normalized in {"분", "minute", "minutes", "min", "mins"}:
-        return amount
-    if normalized in {"시간", "hour", "hours", "hr", "hrs"}:
-        return amount * 60
-    if normalized in {"일", "day", "days"}:
-        return amount * 24 * 60
-    if normalized in {"주", "week", "weeks"}:
-        return amount * 7 * 24 * 60
-    return amount
-
-
-def _extract_member_query_from_request(text: str, *, action_patterns: tuple[str, ...]) -> str:
-    member_mentions = re.findall(r"<@!?\d{15,25}>", text)
-    if member_mentions:
-        return member_mentions[0]
-
-    cleaned = text
-    cleaned = re.sub(
-        r"(?:사유|이유|reason)\s*[:=]?\s*.+$",
-        " ",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"\d+\s*(?:초|분|시간|일|주|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?)",
-        " ",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(r"(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?:분|시간|일|주)", " ", cleaned)
-
-    for pattern in action_patterns:
-        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
-
-    cleaned = re.sub(
-        r"(?:좀|제발|바로|빨리|적용|처리|실행|해줘|해주세요|해라|걸어줘|시켜줘|"
-        r"해제|풀어줘|풀어|취소|그\s*사람|이\s*사람|저\s*사람|걔|쟤|얘)",
-        " ",
-        cleaned,
-    )
-    cleaned = re.sub(r"[`*_~>|\\[\](){}:;,!?]", " ", cleaned)
-    tokens = []
-    for token in cleaned.split():
-        token = token.strip("@ ")
-        token = re.sub(r"(?:님|씨|에게|한테|으로|로|을|를)$", "", token)
-        if token and token not in {"좀", "제발", "바로", "빨리"}:
-            tokens.append(token)
-    cleaned = " ".join(tokens)
-    return cleaned[:100]
-
-
-def _extract_reason(text: str) -> str:
-    match = re.search(r"(?:사유|이유|reason)\s*[:=]?\s*(.+)$", text, flags=re.IGNORECASE)
-    if not match:
-        return ""
-    return " ".join(match.group(1).split())[:512]
-
-
 @dataclass
 class ActionContext:
     bot: "DiscordAIBot"
@@ -678,6 +454,9 @@ async def _plan_action(
         confidence = float(confidence)
     except (TypeError, ValueError):
         confidence = 0
+
+    if action not in SUPPORTED_ACTIONS:
+        return None
 
     return ActionPlan(action=action, args=args, confidence=confidence)
 
