@@ -13,12 +13,18 @@ from discord_bot.agent_actions import (
     build_action_context,
     describe_action_plan,
     execute_agent_action,
-    plan_agent_action,
+    run_agent_turn,
     validate_action_plan,
 )
 from discord_bot.channel_context import build_channel_context
 from discord_bot.settings_store import AutoChannelSettings
-from providers.base import Message, ProviderHTTPStatusError, ProviderOptions, ProviderQuotaError
+from providers.base import (
+    Message,
+    ProviderHTTPStatusError,
+    ProviderOptions,
+    ProviderQuotaError,
+    ProviderResponseError,
+)
 from utils.discord_markdown import normalize_discord_markdown
 from utils.logger import get_logger
 from utils.split_message import split_discord_message
@@ -86,8 +92,6 @@ async def handle_ai_request(
                 interaction=interaction,
             )
 
-        user_id = _get_user_id(interaction, message)
-        channel_id = _get_channel_id(interaction, message)
         guild_id = _get_guild_id(interaction, message)
         effective_style = style_name or bot.settings.get_default_style(guild_id)
         system_prompt = build_system_prompt(
@@ -101,7 +105,13 @@ async def handle_ai_request(
             limit=bot.config.channel_context_messages,
             char_limit=bot.config.channel_context_char_limit,
         )
-        action_plan = await plan_agent_action(bot, prompt, channel_context=channel_context)
+        agent_turn = await run_agent_turn(
+            bot,
+            prompt,
+            system_prompt=system_prompt,
+            channel_context=channel_context,
+        )
+        action_plan = agent_turn.action_plan
         if action_plan is not None:
             guild = interaction.guild if interaction else message.guild if message else None
             if guild is None:
@@ -121,14 +131,18 @@ async def handle_ai_request(
             )
             validation_error = await validate_action_plan(action_context, action_plan)
             if validation_error:
-                validation_response = await _generate_validation_feedback(
-                    bot=bot,
-                    prompt=prompt,
-                    action_plan=action_plan,
-                    validation_error=validation_error,
-                    system_prompt=system_prompt,
-                    channel_context=channel_context,
-                )
+                try:
+                    validation_response = await _generate_validation_feedback(
+                        bot=bot,
+                        prompt=prompt,
+                        action_plan=action_plan,
+                        validation_error=validation_error,
+                        system_prompt=system_prompt,
+                        channel_context=channel_context,
+                    )
+                except ProviderResponseError:
+                    logger.exception("Provider returned invalid validation feedback.")
+                    validation_response = validation_error
                 chunks = split_discord_message(normalize_discord_markdown(validation_response))
                 await _send_response_chunks(
                     chunks,
@@ -162,14 +176,7 @@ async def handle_ai_request(
             )
             return
 
-        response = await bot.agent.run(
-            prompt,
-            user_id=user_id,
-            channel_id=channel_id,
-            source=source,
-            system_prompt=system_prompt,
-            channel_context=channel_context,
-        )
+        response = agent_turn.content
         chunks = split_discord_message(normalize_discord_markdown(response))
         await _send_response_chunks(
             chunks,
@@ -432,6 +439,9 @@ class AgentActionConfirmView(discord.ui.View):
                 system_prompt=self.system_prompt,
                 channel_context=self.channel_context,
             )
+        except ProviderResponseError:
+            logger.exception("Provider returned invalid rejection feedback.")
+            response = "알겠습니다. 요청하신 작업은 실행하지 않았어요."
         except Exception:
             logger.exception("Failed to generate rejection feedback: %s", self.plan.action)
             await _send_followup_chunks_to_channel(
@@ -499,28 +509,6 @@ async def handle_message(bot: "DiscordAIBot", message: discord.Message) -> None:
 
 def _strip_bot_mentions(content: str, bot_user_id: int) -> str:
     return re.sub(fr"<@!?{bot_user_id}>", "", content).strip()
-
-
-def _get_user_id(
-    interaction: discord.Interaction | None,
-    message: discord.Message | None,
-) -> int | None:
-    if interaction:
-        return interaction.user.id
-    if message:
-        return message.author.id
-    return None
-
-
-def _get_channel_id(
-    interaction: discord.Interaction | None,
-    message: discord.Message | None,
-) -> int | None:
-    if interaction and interaction.channel:
-        return interaction.channel.id
-    if message and message.channel:
-        return message.channel.id
-    return None
 
 
 def _get_guild_id(

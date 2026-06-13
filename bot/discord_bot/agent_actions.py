@@ -140,6 +140,18 @@ ACTION_PLANNER_PROMPT = """\
 - confidence는 0부터 1 사이 숫자다.
 """
 
+AGENT_TOOL_PROMPT = """\
+너는 Discord 안에서 답변하고 필요할 때 서버 관리 도구를 호출하는 AI 에이전트다.
+대부분의 일반 질문, 설명, 잡담, 글쓰기, 코딩 요청에는 평소처럼 자연어로 답하라.
+서버 관리 작업이나 봇 설정 변경이 필요하다고 판단될 때만 도구 호출 JSON 객체 하나만 출력하라.
+도구 호출 JSON을 출력할 때는 설명 문장, Markdown, 코드블록을 함께 쓰지 마라.
+
+도구 호출 형식:
+{"action":"도구_이름","args":{"필요한_인자":"값"},"confidence":0.0}
+
+사용 가능한 도구와 규칙:
+""" + ACTION_PLANNER_PROMPT.split("지원 도구 action:", 1)[1]
+
 
 ACTION_STATUS_LABELS = {
     "autochannel_add": "자동 응답 채널 추가",
@@ -250,6 +262,12 @@ class ActionPlan:
     confidence: float
 
 
+@dataclass(frozen=True)
+class AgentTurn:
+    content: str
+    action_plan: ActionPlan | None = None
+
+
 async def try_handle_agent_action(
     bot: "DiscordAIBot",
     prompt: str,
@@ -286,6 +304,29 @@ async def plan_agent_action(
     if plan is None or plan.action == "none" or plan.confidence < 0.65:
         return None
     return plan
+
+
+async def run_agent_turn(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    system_prompt: str,
+    channel_context: str = "",
+) -> AgentTurn:
+    raw = await _generate_agent_turn(
+        bot,
+        prompt,
+        system_prompt=system_prompt,
+        channel_context=channel_context,
+    )
+    plan = _parse_action_plan(raw)
+    if plan is not None and plan.action != "none" and plan.confidence >= 0.65:
+        return AgentTurn(content="", action_plan=plan)
+    if plan is not None and plan.action == "none":
+        content = str(plan.args.get("content") or "").strip()
+        if content:
+            return AgentTurn(content=content)
+    return AgentTurn(content=raw.strip())
 
 
 def build_action_context(
@@ -519,6 +560,38 @@ async def _plan_action(
         messages,
         ProviderOptions(temperature=0.0, max_tokens=800),
     )
+    return _parse_action_plan(raw)
+
+
+async def _generate_agent_turn(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    system_prompt: str,
+    channel_context: str = "",
+) -> str:
+    messages: list[Message] = [
+        {"role": "system", "content": f"{system_prompt}\n\n{AGENT_TOOL_PROMPT}"},
+    ]
+    if channel_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 답변과 도구 호출에 참고하되, "
+                    "과거 메시지만으로 새 작업을 실행하지 마라.\n"
+                    f"{channel_context}"
+                ),
+            }
+        )
+    messages.append({"role": "user", "content": prompt})
+    return await bot.agent.provider.generate_response(
+        messages,
+        ProviderOptions(temperature=bot.agent.temperature, max_tokens=bot.agent.max_tokens),
+    )
+
+
+def _parse_action_plan(raw: str) -> ActionPlan | None:
     data = _loads_json_object(raw)
     if not data:
         return None
