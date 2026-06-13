@@ -13,6 +13,7 @@ from discord_bot.agent_actions import (
     build_action_context,
     describe_action_plan,
     execute_agent_action,
+    retry_agent_turn_after_validation,
     run_agent_turn,
     validate_action_plan,
 )
@@ -63,6 +64,8 @@ QUESTION_HINTS = (
     "가능",
 )
 CONFIRMATION_TIMEOUT_SECONDS = 60.0
+FEEDBACK_GENERATION_ATTEMPTS = 2
+ACTION_VALIDATION_REPLAN_ATTEMPTS = 2
 
 
 async def handle_ai_request(
@@ -138,7 +141,37 @@ async def handle_ai_request(
                 message=message,
                 status_callback=update_action_status,
             )
-            validation_error = await validate_action_plan(action_context, action_plan)
+            validation_error = ""
+            for attempt in range(ACTION_VALIDATION_REPLAN_ATTEMPTS + 1):
+                validation_error = await validate_action_plan(action_context, action_plan) or ""
+                if not validation_error:
+                    break
+                if attempt >= ACTION_VALIDATION_REPLAN_ATTEMPTS:
+                    break
+
+                try:
+                    repaired_turn = await retry_agent_turn_after_validation(
+                        bot,
+                        prompt,
+                        failed_plan=action_plan,
+                        validation_error=validation_error,
+                        system_prompt=system_prompt,
+                        channel_context=channel_context,
+                    )
+                except ProviderResponseError:
+                    logger.warning("Provider returned invalid validation replan for action: %s", action_plan.action)
+                    break
+                if repaired_turn.action_plan is None:
+                    chunks = split_discord_message(normalize_discord_markdown(repaired_turn.content))
+                    await _send_response_chunks(
+                        chunks,
+                        thinking_message=thinking_message,
+                        interaction=interaction,
+                        message=message,
+                    )
+                    return
+                action_plan = repaired_turn.action_plan
+
             if validation_error:
                 try:
                     validation_response = await _generate_validation_feedback(
@@ -150,7 +183,7 @@ async def handle_ai_request(
                         channel_context=channel_context,
                     )
                 except ProviderResponseError:
-                    logger.exception("Provider returned invalid validation feedback.")
+                    logger.warning("Provider returned invalid validation feedback for action: %s", action_plan.action)
                     validation_response = validation_error
                 chunks = split_discord_message(normalize_discord_markdown(validation_response))
                 await _send_response_chunks(
@@ -176,13 +209,14 @@ async def handle_ai_request(
                 return
 
             execution_result = await execute_agent_action(action_context, action_plan)
-            final_response = await _generate_execution_feedback_with_fallback(
+            final_response = await _generate_execution_feedback_or_fallback(
                 bot=bot,
                 prompt=prompt,
                 action_plan=action_plan,
                 execution_result=execution_result,
                 system_prompt=system_prompt,
                 channel_context=channel_context,
+                confirmed=False,
             )
             chunks = split_discord_message(normalize_discord_markdown(final_response))
             await _send_response_chunks(
@@ -310,9 +344,10 @@ async def _generate_validation_feedback(
             ),
         }
     )
-    return await bot.agent.provider.generate_response(
-        messages,
-        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+    return await _generate_feedback_response(
+        bot=bot,
+        messages=messages,
+        label="validation feedback",
     )
 
 
@@ -356,33 +391,11 @@ async def _generate_rejection_feedback(
             ),
         }
     )
-    return await bot.agent.provider.generate_response(
-        messages,
-        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+    return await _generate_feedback_response(
+        bot=bot,
+        messages=messages,
+        label="rejection feedback",
     )
-
-
-async def _generate_execution_feedback_with_fallback(
-    *,
-    bot: "DiscordAIBot",
-    prompt: str,
-    action_plan: ActionPlan,
-    execution_result: str,
-    system_prompt: str,
-    channel_context: str,
-) -> str:
-    try:
-        return await _generate_execution_feedback(
-            bot=bot,
-            prompt=prompt,
-            action_plan=action_plan,
-            execution_result=execution_result,
-            system_prompt=system_prompt,
-            channel_context=channel_context,
-        )
-    except ProviderResponseError:
-        logger.exception("Provider returned invalid execution feedback.")
-        return execution_result
 
 
 async def _generate_execution_feedback(
@@ -402,6 +415,7 @@ async def _generate_execution_feedback(
                 "서버 관리 도구 실행이 끝났다. 실행 결과를 바탕으로 사용자에게 최종 답변을 하라. "
                 "이미 실행된 작업을 다시 확인하지 말고, 수락/거절 버튼을 텍스트로 흉내 내지 마라. "
                 "성공이면 무엇이 완료됐는지 짧게 말하고, 실패나 제한이면 이유와 다음 조치를 간결하게 알려라. "
+                "성공 답변에는 대상 멤버/채널/역할과 변경된 값이 실행 결과에 있으면 반드시 포함하라. "
                 "내부 action 이름이나 args 키 이름은 말하지 마라."
             ),
         },
@@ -426,10 +440,80 @@ async def _generate_execution_feedback(
             ),
         }
     )
-    return await bot.agent.provider.generate_response(
-        messages,
-        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+    return await _generate_feedback_response(
+        bot=bot,
+        messages=messages,
+        label="execution feedback",
     )
+
+
+async def _generate_execution_feedback_or_fallback(
+    *,
+    bot: "DiscordAIBot",
+    prompt: str,
+    action_plan: ActionPlan,
+    execution_result: str,
+    system_prompt: str,
+    channel_context: str,
+    confirmed: bool,
+) -> str:
+    try:
+        return await _generate_execution_feedback(
+            bot=bot,
+            prompt=prompt,
+            action_plan=action_plan,
+            execution_result=execution_result,
+            system_prompt=system_prompt,
+            channel_context=channel_context,
+        )
+    except ProviderResponseError:
+        logger.warning(
+            "Failed to generate %sAI action feedback after execution: %s",
+            "confirmed " if confirmed else "",
+            action_plan.action,
+        )
+        return execution_result
+
+
+async def _generate_feedback_response(
+    *,
+    bot: "DiscordAIBot",
+    messages: list[Message],
+    label: str,
+) -> str:
+    retry_messages = list(messages)
+    last_error: ProviderResponseError | None = None
+    for attempt in range(FEEDBACK_GENERATION_ATTEMPTS + 1):
+        try:
+            return await bot.agent.provider.generate_response(
+                retry_messages,
+                ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+            )
+        except ProviderResponseError as exc:
+            last_error = exc
+            logger.warning(
+                "Provider returned invalid %s on attempt %s/%s: %s",
+                label,
+                attempt + 1,
+                FEEDBACK_GENERATION_ATTEMPTS + 1,
+                exc,
+            )
+            if attempt >= FEEDBACK_GENERATION_ATTEMPTS:
+                break
+            retry_messages = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": (
+                        "이전 출력이 비어 있었다. "
+                        f"관찰된 문제: {exc}. "
+                        "이전 지시와 사용자 요청을 유지하되, Discord에 보낼 짧은 최종 답변 텍스트만 다시 출력하라. "
+                        "빈 응답, JSON, Markdown 코드블록은 출력하지 마라."
+                    ),
+                },
+            ]
+
+    raise last_error or ProviderResponseError(f"Provider failed to generate {label}.")
 
 
 class AgentActionConfirmView(discord.ui.View):
@@ -491,14 +575,6 @@ class AgentActionConfirmView(discord.ui.View):
         self.context.status_callback = update_status
         try:
             execution_result = await execute_agent_action(self.context, self.plan)
-            response = await _generate_execution_feedback_with_fallback(
-                bot=self.bot,
-                prompt=self.prompt,
-                action_plan=self.plan,
-                execution_result=execution_result,
-                system_prompt=self.system_prompt,
-                channel_context=self.channel_context,
-            )
         except Exception:
             logger.exception("Failed to execute confirmed AI action: %s", self.plan.action)
             await _edit_ai_message(
@@ -509,6 +585,15 @@ class AgentActionConfirmView(discord.ui.View):
             self.stop()
             return
 
+        response = await _generate_execution_feedback_or_fallback(
+            bot=self.bot,
+            prompt=self.prompt,
+            action_plan=self.plan,
+            execution_result=execution_result,
+            system_prompt=self.system_prompt,
+            channel_context=self.channel_context,
+            confirmed=True,
+        )
         chunks = split_discord_message(normalize_discord_markdown(response))
         await _send_response_chunks_to_message(self.response_message, chunks)
         self.stop()
@@ -534,9 +619,6 @@ class AgentActionConfirmView(discord.ui.View):
                 system_prompt=self.system_prompt,
                 channel_context=self.channel_context,
             )
-        except ProviderResponseError:
-            logger.exception("Provider returned invalid rejection feedback.")
-            response = "알겠습니다. 요청하신 작업은 실행하지 않았어요."
         except Exception:
             logger.exception("Failed to generate rejection feedback: %s", self.plan.action)
             await _send_followup_chunks_to_channel(

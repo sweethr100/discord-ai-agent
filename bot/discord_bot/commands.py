@@ -236,20 +236,14 @@ def register_commands(bot: "DiscordAIBot") -> None:
     async def style_presets(interaction: discord.Interaction) -> None:
         guild_id = _get_guild_id(interaction)
         custom_styles = bot.settings.list_custom_styles(guild_id)
-        prompt_entries = _style_prompt_entries(bot, guild_id)
         content = format_style_presets(
             custom_styles,
             custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
-            include_prompts=False,
         )
-        if prompt_entries:
-            content = f"{content}\n\n아래 메뉴에서 스타일을 고르면 시스템 프롬프트를 자세히 볼 수 있어요."
         chunks = split_discord_message(content)
-        view = StylePresetPromptView(prompt_entries) if prompt_entries else None
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 chunks[0] if chunks else "사용 가능한 AI 스타일이 없어요.",
-                view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             start = 1
@@ -485,80 +479,6 @@ async def _send_command_chunks(
             chunk,
             allowed_mentions=discord.AllowedMentions.none(),
         )
-
-
-def _style_prompt_entries(
-    bot: "DiscordAIBot",
-    guild_id: int | None,
-) -> list[tuple[str, str, str]]:
-    entries = [
-        (
-            preset.name,
-            preset.description,
-            preset.prompt or "추가 스타일 프롬프트 없음",
-        )
-        for preset in STYLE_PRESETS.values()
-    ]
-    entries.extend(
-        (
-            preset.name,
-            preset.description,
-            preset.prompt or "비어 있음",
-        )
-        for preset in bot.settings.list_custom_styles(guild_id)
-    )
-    return entries
-
-
-class StylePresetPromptView(discord.ui.View):
-    def __init__(self, entries: list[tuple[str, str, str]]) -> None:
-        super().__init__(timeout=300)
-        self.add_item(StylePresetPromptSelect(entries[:25]))
-
-
-class StylePresetPromptSelect(discord.ui.Select):
-    def __init__(self, entries: list[tuple[str, str, str]]) -> None:
-        self.entries = {name: (description, prompt) for name, description, prompt in entries}
-        options = [
-            discord.SelectOption(
-                label=_truncate_option_text(name, 100),
-                value=name,
-                description=_truncate_option_text(description, 100),
-            )
-            for name, description, _prompt in entries
-        ]
-        super().__init__(
-            placeholder="프롬프트 자세히 보기",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        name = self.values[0]
-        description, prompt = self.entries.get(name, ("", "프롬프트를 찾지 못했어요."))
-        content = f"스타일: `{name}`\n설명: {description}\n시스템 프롬프트:\n{prompt}"
-        chunks = split_discord_message(content)
-        if not chunks:
-            chunks = ["프롬프트를 찾지 못했어요."]
-
-        await interaction.response.send_message(
-            chunks[0],
-            ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
-        for chunk in chunks[1:]:
-            await interaction.followup.send(
-                chunk,
-                ephemeral=True,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-
-
-def _truncate_option_text(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
 
 
 def _style_choices(

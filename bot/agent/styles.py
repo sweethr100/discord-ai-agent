@@ -241,18 +241,24 @@ def format_style_presets(
     custom_styles: Sequence[StylePreset] = (),
     *,
     custom_prompt: str = "",
-    include_prompts: bool = True,
+    include_prompts: bool | None = None,
+    include_builtin_prompts: bool = False,
+    include_custom_prompts: bool = True,
 ) -> str:
+    if include_prompts is not None:
+        include_builtin_prompts = include_prompts
+        include_custom_prompts = include_prompts
+
     lines = ["사용 가능한 AI 스타일:"]
     for preset in STYLE_PRESETS.values():
         line = f"- `{preset.name}`: {preset.description}"
-        if include_prompts:
+        if include_builtin_prompts:
             prompt = preset.prompt or "추가 스타일 프롬프트 없음"
             line = f"{line}\n  시스템 프롬프트: {prompt}"
         lines.append(line)
     for preset in custom_styles:
         line = f"- `{preset.name}`: {preset.description}"
-        if include_prompts:
+        if include_custom_prompts:
             prompt = preset.prompt or "비어 있음"
             line = f"{line}\n  시스템 프롬프트: {prompt}"
         lines.append(line)

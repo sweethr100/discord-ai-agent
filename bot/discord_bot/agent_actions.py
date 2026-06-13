@@ -28,6 +28,16 @@ ACTION_PLANNER_PROMPT = """\
 출력 형식:
 {"action":"도구_이름","args":{"필요한_인자":"값"},"confidence":0.0}
 
+여러 작업 출력 형식:
+{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}],"confidence":0.0}
+
+예시:
+사용자: 찐코 통방에서 연결 끊어달라고
+출력: {"action":"member_disconnect_voice","args":{"member":"찐코"},"confidence":0.95}
+
+사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
+출력: {"actions":[{"action":"member_nickname","args":{"member":"me","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"bepl_0505","nickname":"브론즈베플"}}],"confidence":0.95}
+
 지원 도구 action:
 - autochannel_add: args channel, mode, keywords
 - autochannel_remove: args channel
@@ -114,14 +124,20 @@ ACTION_PLANNER_PROMPT = """\
 
 규칙:
 - 실행 요청이 명확할 때만 도구 action을 선택하라.
+- 사용자가 한 문장에 여러 서버 관리 작업을 요청하면 actions 배열로 여러 도구 호출을 순서대로 출력하라.
 - "설정법 알려줘", "명령어 뭐야", "할 수 있어?" 같은 설명 요청은 none이다.
 - 삭제, 차단, 추방, 대량 삭제 같은 파괴적 작업은 사용자가 명확히 실행을 요청한 경우에만 선택하라.
+- "통방", "음성방", "보이스", "VC"는 음성 채널을 뜻할 수 있다.
+- "<멤버> 통방에서 연결 끊어", "<멤버> 음성방에서 내보내", "<멤버> 보이스 끊어달라고" 같은 요청은 member_disconnect_voice 실행 요청이다.
+- 지원 도구로 가능한 서버 관리 작업을 "할 수 없다", "직접 해야 한다", "원격으로 개입할 수 없다"고 자연어로 답하지 말고 도구 호출 JSON을 출력하라.
 - 최근 채널 대화 문맥은 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라.
 - 현재 요청이 "120분 해줘", "해제해줘", "그렇게 해줘"처럼 이전 서버 관리 요청의 누락 정보를 보충하는 말이면, 최근 문맥의 해당 요청과 합쳐 하나의 도구 action을 선택하라.
 - 과거 메시지만으로 새 작업을 실행하지 마라. 반드시 현재 요청에 실행 의도가 있어야 한다.
 - member_timeout에 대상은 있지만 duration_minutes가 없고 해제 요청도 아니면 member_timeout_duration_needed를 선택하라.
 - channel/member/role/thread/forum/emoji/sticker/sound/event/webhook/integration은 Discord mention 또는 ID가 있으면 그대로 넣어라. 예: <#123>, <@456>, <@&789>.
 - member가 멘션이나 ID가 아니어도 사용자가 말한 별명, 표시 이름, 유저명을 문자열 그대로 넣어라.
+- 사용자가 "나", "내", "저", "본인", "me"를 대상 멤버로 말하면 member 값을 "me"로 넣어라.
+- "별명 되돌려", "별명 초기화", "별명 없애"는 member_nickname의 nickname을 null로 넣어라.
 - 현재 채널을 뜻하면 channel을 "current"로 넣어라.
 - type은 text, voice, stage, category, forum, media 중 하나만 사용하라.
 - mode는 always, question_only, keyword 중 하나만 사용하라.
@@ -144,13 +160,36 @@ ACTION_PLANNER_PROMPT = """\
 """
 
 AGENT_TOOL_PROMPT = """\
-너는 Discord 안에서 답변하고 필요할 때 서버 관리 도구를 호출하는 AI 에이전트다.
-대부분의 일반 질문, 설명, 잡담, 글쓰기, 코딩 요청에는 평소처럼 자연어로 답하라.
-서버 관리 작업이나 봇 설정 변경이 필요하다고 판단될 때만 도구 호출 JSON 객체 하나만 출력하라.
-도구 호출 JSON을 출력할 때는 설명 문장, Markdown, 코드블록을 함께 쓰지 마라.
+너는 Discord 안에서 자연어 답변과 서버 관리 도구 호출을 모두 처리하는 AI 에이전트다.
+
+응답 선택 규칙:
+- 일반 질문, 설명 요청, 잡담, 글쓰기, 코딩 요청이면 평소처럼 자연어로 답하라.
+- 사용자가 서버 관리 작업이나 봇 설정 변경을 실행해 달라고 요청하면 자연어로 답하지 말고 도구 호출 JSON 객체 하나만 출력하라.
+- 도구 호출 JSON을 출력할 때는 설명 문장, Markdown, 코드블록을 함께 쓰지 마라.
+- 지원 도구로 가능한 작업을 "할 수 없다", "직접 해야 한다", "원격으로 개입할 수 없다"고 자연어로 답하지 마라. 반드시 도구 호출 JSON을 출력하라.
+- "가능해?", "할 수 있어?", "명령어 알려줘", "설정법 알려줘"처럼 실행이 아니라 설명을 묻는 요청이면 자연어로 답하라.
 
 도구 호출 형식:
 {"action":"도구_이름","args":{"필요한_인자":"값"},"confidence":0.0}
+
+여러 작업 도구 호출 형식:
+{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}],"confidence":0.0}
+
+도구 호출 예시:
+사용자: 찐코 통방에서 연결 끊어달라고
+출력: {"action":"member_disconnect_voice","args":{"member":"찐코"},"confidence":0.95}
+
+사용자: 리건한테 관리자 역할 줘
+출력: {"action":"role_add","args":{"member":"리건","role":"관리자"},"confidence":0.9}
+
+사용자: 내 별명 되돌려놔
+출력: {"action":"member_nickname","args":{"member":"me","nickname":null},"confidence":0.95}
+
+사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
+출력: {"actions":[{"action":"member_nickname","args":{"member":"me","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"bepl_0505","nickname":"브론즈베플"}}],"confidence":0.95}
+
+사용자: 음성방에서 사람 내보낼 수 있어?
+출력: 음성 채널 멤버 연결 끊기 같은 서버 관리 작업을 도울 수 있어요. 실행하려면 대상 멤버를 말해 주세요.
 
 사용 가능한 도구와 규칙:
 """ + ACTION_PLANNER_PROMPT.split("지원 도구 action:", 1)[1]
@@ -258,6 +297,9 @@ READ_ONLY_ACTIONS = {
 }
 
 SUPPORTED_ACTIONS = set(ACTION_STATUS_LABELS) | {"none"}
+ACTION_JSON_REPAIR_ATTEMPTS = 2
+MAX_BATCH_ACTIONS = 10
+BATCH_ACTION = "batch"
 
 
 @dataclass(frozen=True)
@@ -271,6 +313,13 @@ class ActionPlan:
 class AgentTurn:
     content: str
     action_plan: ActionPlan | None = None
+
+
+@dataclass(frozen=True)
+class ActionPlanParseResult:
+    plan: ActionPlan | None = None
+    error: str | None = None
+    attempted_tool_call: bool = False
 
 
 async def try_handle_agent_action(
@@ -324,14 +373,102 @@ async def run_agent_turn(
         system_prompt=system_prompt,
         channel_context=channel_context,
     )
-    plan = _parse_action_plan(raw)
-    if plan is not None and plan.action != "none" and plan.confidence >= 0.65:
-        return AgentTurn(content="", action_plan=plan)
-    if plan is not None and plan.action == "none":
-        content = str(plan.args.get("content") or "").strip()
-        if content:
+    return await _resolve_agent_turn_from_raw(
+        bot,
+        prompt,
+        raw=raw,
+        system_prompt=system_prompt,
+        channel_context=channel_context,
+    )
+
+
+async def retry_agent_turn_after_validation(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    failed_plan: ActionPlan,
+    validation_error: str,
+    system_prompt: str,
+    channel_context: str = "",
+) -> AgentTurn:
+    raw = await _retry_agent_action_after_validation(
+        bot,
+        prompt,
+        failed_plan=failed_plan,
+        validation_error=validation_error,
+        system_prompt=system_prompt,
+        channel_context=channel_context,
+    )
+    return await _resolve_agent_turn_from_raw(
+        bot,
+        prompt,
+        raw=raw,
+        system_prompt=system_prompt,
+        channel_context=channel_context,
+    )
+
+
+async def _resolve_agent_turn_from_raw(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    raw: str,
+    system_prompt: str,
+    channel_context: str,
+) -> AgentTurn:
+    for _attempt in range(ACTION_JSON_REPAIR_ATTEMPTS + 1):
+        parse_result = _parse_action_plan_result(raw)
+        turn = _agent_turn_from_plan(parse_result.plan)
+        if turn is not None:
+            return turn
+        if (
+            parse_result.plan is not None
+            and parse_result.plan.action != "none"
+            and parse_result.plan.confidence < 0.65
+        ):
+            content = await _generate_action_issue_feedback(
+                bot,
+                prompt,
+                issue=f"도구 호출 신뢰도가 낮다: {parse_result.plan.confidence}",
+                system_prompt=system_prompt,
+                channel_context=channel_context,
+            )
             return AgentTurn(content=content)
-    return AgentTurn(content=raw.strip())
+        if not parse_result.error or not parse_result.attempted_tool_call:
+            return AgentTurn(content=raw.strip())
+        if _attempt >= ACTION_JSON_REPAIR_ATTEMPTS:
+            break
+
+        raw = await _retry_agent_action_json(
+            bot,
+            prompt,
+            invalid_response=raw,
+            parse_error=parse_result.error,
+            system_prompt=system_prompt,
+            channel_context=channel_context,
+        )
+    content = await _generate_action_issue_feedback(
+        bot,
+        prompt,
+        issue="서버 관리 작업 요청을 올바른 도구 호출 JSON으로 정리하지 못했다.",
+        system_prompt=system_prompt,
+        channel_context=channel_context,
+    )
+    return AgentTurn(content=content)
+
+
+def _agent_turn_from_plan(plan: ActionPlan | None) -> AgentTurn | None:
+    if plan is None:
+        return None
+    if plan.action != "none":
+        if plan.confidence >= 0.65:
+            return AgentTurn(content="", action_plan=plan)
+        return None
+
+    content = str(plan.args.get("content") or "").strip()
+    if content:
+        return AgentTurn(content=content)
+    return None
 
 
 def build_action_context(
@@ -357,6 +494,16 @@ async def execute_agent_action(context: "ActionContext", plan: ActionPlan) -> st
 
 
 async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> str | None:
+    if plan.action == BATCH_ACTION:
+        actions = _batch_action_plans(plan)
+        if not actions:
+            return "실행할 작업 목록을 찾지 못했어요."
+        for child in actions:
+            validation_error = await validate_action_plan(context, child)
+            if validation_error:
+                return f"{describe_action_plan(child)}: {validation_error}"
+        return None
+
     if plan.action in {
         "member_kick",
         "member_ban",
@@ -372,6 +519,8 @@ async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> st
         member = await _resolve_member(context, plan.args.get("member"))
         if member is None:
             requested = _human_target(plan.args.get("member"), fallback="대상 멤버")
+            if plan.action == "member_disconnect_voice" and requested == "대상 멤버":
+                return "연결을 끊을 멤버를 찾지 못했어요. 멤버를 멘션하거나 정확한 별명/표시 이름으로 다시 요청해 주세요."
             return f"{requested} 멤버를 서버에서 찾지 못했어요."
 
     if plan.action in {
@@ -426,10 +575,19 @@ async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> st
 
 
 def action_requires_confirmation(plan: ActionPlan) -> bool:
+    if plan.action == BATCH_ACTION:
+        actions = _batch_action_plans(plan)
+        return any(action_requires_confirmation(child) for child in actions)
     return plan.action not in READ_ONLY_ACTIONS
 
 
 def describe_action_plan(plan: ActionPlan) -> str:
+    if plan.action == BATCH_ACTION:
+        actions = _batch_action_plans(plan)
+        if not actions:
+            return "여러 작업"
+        return "여러 작업: " + " / ".join(describe_action_plan(child) for child in actions)
+
     natural_summary = _natural_action_summary(plan)
     if natural_summary:
         return natural_summary
@@ -596,25 +754,340 @@ async def _generate_agent_turn(
     )
 
 
+async def _retry_agent_action_json(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    invalid_response: str,
+    parse_error: str,
+    system_prompt: str,
+    channel_context: str = "",
+) -> str:
+    messages: list[Message] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n{AGENT_TOOL_PROMPT}\n\n"
+                "이전 응답이 서버 관리 도구 호출 JSON 검증에 실패했다. "
+                "검증 실패 이유와 이전 응답을 보고 JSON 객체 하나만 다시 출력하라. "
+                "설명 문장, Markdown, 코드블록은 절대 쓰지 마라. "
+                "현재 요청이 서버 관리 실행 요청이면 올바른 action, args, confidence를 출력하라. "
+                '실행 요청이 아니면 {"action":"none","args":{},"confidence":0}를 출력하라.'
+            ),
+        },
+    ]
+    if channel_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라. "
+                    "과거 메시지만으로 새 작업을 실행하지 마라.\n"
+                    f"{channel_context}"
+                ),
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"현재 요청: {prompt}\n"
+                f"검증 실패 이유: {parse_error}\n"
+                f"이전 응답:\n{invalid_response}"
+            ),
+        }
+    )
+    return await bot.agent.provider.generate_response(
+        messages,
+        ProviderOptions(temperature=0.0, max_tokens=800),
+    )
+
+
+async def _retry_agent_action_after_validation(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    failed_plan: ActionPlan,
+    validation_error: str,
+    system_prompt: str,
+    channel_context: str = "",
+) -> str:
+    messages: list[Message] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n{AGENT_TOOL_PROMPT}\n\n"
+                "이전 서버 관리 도구 호출이 실행 전 검증에서 실패했다. "
+                "검증 실패 이유를 tool observation처럼 참고해서, 같은 사용자 요청을 처리할 올바른 JSON 객체 하나만 다시 출력하라. "
+                "설명 문장, Markdown, 코드블록은 절대 쓰지 마라. "
+                "최근 문맥으로 대상이나 채널을 보정할 수 있으면 수정된 action과 args를 출력하라. "
+                "정보가 부족해서 더 이상 도구 호출을 고칠 수 없으면 "
+                '{"action":"none","args":{"content":"사용자에게 필요한 정보를 짧게 다시 요청하는 문장"},"confidence":1} '
+                "형식으로 출력하라."
+            ),
+        },
+    ]
+    if channel_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라. "
+                    "과거 메시지만으로 새 작업을 실행하지 마라.\n"
+                    f"{channel_context}"
+                ),
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"현재 요청: {prompt}\n"
+                f"실패한 도구 호출:\n{_action_plan_to_json(failed_plan)}\n"
+                f"검증 실패 이유: {validation_error}"
+            ),
+        }
+    )
+    return await bot.agent.provider.generate_response(
+        messages,
+        ProviderOptions(temperature=0.0, max_tokens=800),
+    )
+
+
+async def _generate_action_issue_feedback(
+    bot: "DiscordAIBot",
+    prompt: str,
+    *,
+    issue: str,
+    system_prompt: str,
+    channel_context: str = "",
+) -> str:
+    messages: list[Message] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n"
+                "서버 관리 도구 호출을 준비하는 내부 단계에서 문제가 생겼다. "
+                "사용자에게 내부 JSON, action 이름, args 키 이름은 말하지 마라. "
+                "무엇이 부족하거나 불확실한지 짧게 설명하고, 사용자가 다시 요청할 때 필요한 정보를 한 문장으로 알려라."
+            ),
+        },
+    ]
+    if channel_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 사용자의 의도를 이해하는 데만 참고하라.\n"
+                    f"{channel_context}"
+                ),
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"사용자 요청: {prompt}\n"
+                f"내부 실패 이유: {issue}"
+            ),
+        }
+    )
+    return await bot.agent.provider.generate_response(
+        messages,
+        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+    )
+
+
+def _action_plan_to_json(plan: ActionPlan) -> str:
+    if plan.action == BATCH_ACTION:
+        return json.dumps(
+            {
+                "actions": plan.args.get("actions", []),
+                "confidence": plan.confidence,
+            },
+            ensure_ascii=False,
+        )
+
+    return json.dumps(_action_plan_to_dict(plan), ensure_ascii=False)
+
+
+def _action_plan_to_dict(plan: ActionPlan) -> dict[str, Any]:
+    return {
+        "action": plan.action,
+        "args": plan.args,
+        "confidence": plan.confidence,
+    }
+
+
+def _batch_action_plans(plan: ActionPlan) -> list[ActionPlan]:
+    if plan.action != BATCH_ACTION:
+        return []
+
+    raw_actions = plan.args.get("actions")
+    if not isinstance(raw_actions, list):
+        return []
+
+    actions: list[ActionPlan] = []
+    for item in raw_actions[:MAX_BATCH_ACTIONS]:
+        if not isinstance(item, dict):
+            continue
+        child_plan, error = _parse_action_plan_data(item, default_confidence=1.0)
+        if error or child_plan is None or child_plan.action == "none":
+            continue
+        actions.append(child_plan)
+    return actions
+
+
 def _parse_action_plan(raw: str) -> ActionPlan | None:
+    return _parse_action_plan_result(raw).plan
+
+
+def _parse_action_plan_result(raw: str) -> ActionPlanParseResult:
+    attempted_tool_call = _looks_like_action_plan(raw)
     data = _loads_json_object(raw)
     if not data:
-        return None
+        if attempted_tool_call:
+            return ActionPlanParseResult(
+                error="JSON 객체를 파싱하지 못했다.",
+                attempted_tool_call=True,
+            )
+        return ActionPlanParseResult()
 
+    if "actions" in data:
+        actions = data.get("actions")
+        if not isinstance(actions, list):
+            return ActionPlanParseResult(
+                error="actions 필드는 배열이어야 한다.",
+                attempted_tool_call=True,
+            )
+        if not actions:
+            return ActionPlanParseResult(
+                error="actions 배열은 비어 있으면 안 된다.",
+                attempted_tool_call=True,
+            )
+        if len(actions) > MAX_BATCH_ACTIONS:
+            return ActionPlanParseResult(
+                error=f"actions 배열은 최대 {MAX_BATCH_ACTIONS}개까지만 가능하다.",
+                attempted_tool_call=True,
+            )
+
+        child_plans: list[ActionPlan] = []
+        for index, item in enumerate(actions, start=1):
+            if not isinstance(item, dict):
+                return ActionPlanParseResult(
+                    error=f"actions[{index}] 항목은 객체여야 한다.",
+                    attempted_tool_call=True,
+                )
+            child_plan, child_error = _parse_action_plan_data(item, default_confidence=1.0)
+            if child_error:
+                return ActionPlanParseResult(
+                    error=f"actions[{index}] {child_error}",
+                    attempted_tool_call=True,
+                )
+            if child_plan is None or child_plan.action == "none" or child_plan.action == BATCH_ACTION:
+                return ActionPlanParseResult(
+                    error=f"actions[{index}] 항목은 실행 가능한 단일 action이어야 한다.",
+                    attempted_tool_call=True,
+                )
+            child_plans.append(child_plan)
+
+        raw_confidence = data.get("confidence")
+        if raw_confidence is None:
+            confidence = min((child.confidence for child in child_plans), default=1.0)
+        else:
+            try:
+                confidence = float(raw_confidence)
+            except (TypeError, ValueError):
+                return ActionPlanParseResult(
+                    error="confidence 필드는 숫자여야 한다.",
+                    attempted_tool_call=True,
+                )
+
+        return ActionPlanParseResult(
+            plan=ActionPlan(
+                action=BATCH_ACTION,
+                args={"actions": [_action_plan_to_dict(child) for child in child_plans]},
+                confidence=confidence,
+            ),
+            attempted_tool_call=True,
+        )
+
+    if "action" not in data:
+        attempted_tool_call = attempted_tool_call or any(key in data for key in ("args", "confidence"))
+        if attempted_tool_call:
+            return ActionPlanParseResult(
+                error="action 필드가 없다.",
+                attempted_tool_call=True,
+            )
+        return ActionPlanParseResult()
+
+    plan, error = _parse_action_plan_data(data)
+    if error:
+        return ActionPlanParseResult(error=error, attempted_tool_call=True)
+
+    return ActionPlanParseResult(
+        plan=plan,
+        attempted_tool_call=attempted_tool_call,
+    )
+
+
+def _parse_action_plan_data(
+    data: dict[str, Any],
+    *,
+    default_confidence: float | None = None,
+) -> tuple[ActionPlan | None, str | None]:
     action = str(data.get("action", "none"))
     args = data.get("args", {})
-    confidence = data.get("confidence", 0)
     if not isinstance(args, dict):
-        args = {}
-    try:
-        confidence = float(confidence)
-    except (TypeError, ValueError):
-        confidence = 0
+        return None, "args 필드는 객체여야 한다."
 
     if action not in SUPPORTED_ACTIONS:
-        return None
+        return None, f"지원하지 않는 action이다: {action}"
 
-    return ActionPlan(action=action, args=args, confidence=confidence)
+    raw_confidence = data.get("confidence")
+    if raw_confidence is None:
+        if default_confidence is not None:
+            confidence = default_confidence
+        else:
+            confidence = 0.0 if action == "none" else 1.0
+    else:
+        try:
+            confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            return None, "confidence 필드는 숫자여야 한다."
+
+    return ActionPlan(action=action, args=args, confidence=confidence), None
+
+
+def _looks_like_action_plan(raw: str) -> bool:
+    text = raw.strip()
+    if not text:
+        return False
+
+    normalized = text.casefold()
+    if re.search(r"""["']action["']\s*:""", normalized):
+        return True
+    if re.search(r"""["']actions["']\s*:""", normalized):
+        return True
+    if re.search(r"\baction\s*[:=]", normalized):
+        return True
+    if normalized.startswith("```") and "action" in normalized:
+        return True
+    if normalized.startswith("{") and any(
+        marker in normalized
+        for marker in (
+            "args",
+            "confidence",
+            "member_",
+            "channel_",
+            "style_",
+            "role_",
+            "message_",
+            "thread_",
+        )
+    ):
+        return True
+    return False
 
 
 def _loads_json_object(raw: str) -> dict[str, Any] | None:
@@ -695,6 +1168,9 @@ def _looks_successful(result: str) -> bool:
 async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
     action = plan.action
     args = plan.args
+    if action == BATCH_ACTION:
+        return await _execute_batch_plan(context, plan)
+
     action_label = _action_label(action)
     await _emit_status(context, f"{action_label} 중...")
 
@@ -873,6 +1349,21 @@ async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
         await _emit_status(context, "실행하지 못했습니다.")
         await asyncio.sleep(0.3)
     return result
+
+
+async def _execute_batch_plan(context: ActionContext, plan: ActionPlan) -> str:
+    actions = _batch_action_plans(plan)
+    if not actions:
+        return "실행할 작업 목록을 찾지 못했어요."
+
+    results: list[str] = []
+    total = len(actions)
+    for index, child in enumerate(actions, start=1):
+        await _emit_status(context, f"여러 작업 실행 중... ({index}/{total}) {describe_action_plan(child)}")
+        result = await _execute_plan(context, child)
+        results.append(f"{index}. {describe_action_plan(child)}: {result}")
+
+    return "\n".join(results)
 
 
 async def _autochannel_add(context: ActionContext, args: dict[str, Any]) -> str:
@@ -2384,7 +2875,8 @@ async def _member_nickname(context: ActionContext, args: dict[str, Any]) -> str:
     except discord.Forbidden:
         return "Discord가 별명 변경을 거부했어요. 권한이나 역할 위치를 확인해 주세요."
 
-    return f"{member.mention} 멤버의 별명을 변경했어요."
+    nickname_label = nickname if nickname is not None else "기본 별명"
+    return f"{member.mention} 멤버의 별명을 `{nickname_label}`(으)로 변경했어요."
 
 
 async def _member_move_voice(context: ActionContext, args: dict[str, Any]) -> str:
@@ -3110,6 +3602,10 @@ def _resolve_thread(context: ActionContext, value: Any) -> discord.Thread | None
 
 
 async def _resolve_member(context: ActionContext, value: Any) -> discord.Member | None:
+    text = str(value or "").strip()
+    if text.casefold() in {"me", "self", "myself", "나", "내", "저", "본인"}:
+        return context.user if isinstance(context.user, discord.Member) else None
+
     member_id = _extract_id(value)
     if member_id:
         member = context.guild.get_member(member_id)
@@ -3120,7 +3616,7 @@ async def _resolve_member(context: ActionContext, value: Any) -> discord.Member 
         except discord.NotFound:
             return None
 
-    name = str(value or "").strip().lstrip("@")
+    name = text.lstrip("@")
     if not name:
         return None
 
