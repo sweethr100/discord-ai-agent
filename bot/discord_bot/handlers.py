@@ -166,8 +166,16 @@ async def handle_ai_request(
                 )
                 return
 
-            action_response = await execute_agent_action(action_context, action_plan)
-            chunks = split_discord_message(normalize_discord_markdown(action_response))
+            execution_result = await execute_agent_action(action_context, action_plan)
+            final_response = await _generate_execution_feedback_with_fallback(
+                bot=bot,
+                prompt=prompt,
+                action_plan=action_plan,
+                execution_result=execution_result,
+                system_prompt=system_prompt,
+                channel_context=channel_context,
+            )
+            chunks = split_discord_message(normalize_discord_markdown(final_response))
             await _send_response_chunks(
                 chunks,
                 thinking_message=thinking_message,
@@ -345,6 +353,76 @@ async def _generate_rejection_feedback(
     )
 
 
+async def _generate_execution_feedback_with_fallback(
+    *,
+    bot: "DiscordAIBot",
+    prompt: str,
+    action_plan: ActionPlan,
+    execution_result: str,
+    system_prompt: str,
+    channel_context: str,
+) -> str:
+    try:
+        return await _generate_execution_feedback(
+            bot=bot,
+            prompt=prompt,
+            action_plan=action_plan,
+            execution_result=execution_result,
+            system_prompt=system_prompt,
+            channel_context=channel_context,
+        )
+    except ProviderResponseError:
+        logger.exception("Provider returned invalid execution feedback.")
+        return execution_result
+
+
+async def _generate_execution_feedback(
+    *,
+    bot: "DiscordAIBot",
+    prompt: str,
+    action_plan: ActionPlan,
+    execution_result: str,
+    system_prompt: str,
+    channel_context: str,
+) -> str:
+    messages: list[Message] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n"
+                "서버 관리 도구 실행이 끝났다. 실행 결과를 바탕으로 사용자에게 최종 답변을 하라. "
+                "이미 실행된 작업을 다시 확인하지 말고, 수락/거절 버튼을 텍스트로 흉내 내지 마라. "
+                "성공이면 무엇이 완료됐는지 짧게 말하고, 실패나 제한이면 이유와 다음 조치를 간결하게 알려라. "
+                "내부 action 이름이나 args 키 이름은 말하지 마라."
+            ),
+        },
+    ]
+    if channel_context.strip():
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 사용자의 의도를 이해하는 데만 참고하라.\n"
+                    f"{channel_context.strip()}"
+                ),
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"사용자 원래 요청: {prompt}\n"
+                f"실행한 작업: {describe_action_plan(action_plan)}\n"
+                f"도구 실행 결과: {execution_result}"
+            ),
+        }
+    )
+    return await bot.agent.provider.generate_response(
+        messages,
+        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+    )
+
+
 class AgentActionConfirmView(discord.ui.View):
     def __init__(
         self,
@@ -403,7 +481,15 @@ class AgentActionConfirmView(discord.ui.View):
 
         self.context.status_callback = update_status
         try:
-            response = await execute_agent_action(self.context, self.plan)
+            execution_result = await execute_agent_action(self.context, self.plan)
+            response = await _generate_execution_feedback_with_fallback(
+                bot=self.bot,
+                prompt=self.prompt,
+                action_plan=self.plan,
+                execution_result=execution_result,
+                system_prompt=self.system_prompt,
+                channel_context=self.channel_context,
+            )
         except Exception:
             logger.exception("Failed to execute confirmed AI action: %s", self.plan.action)
             await _edit_ai_message(
