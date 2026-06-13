@@ -25,7 +25,7 @@ SELF_USAGE_MANUAL = """\
 - `message`는 필수다.
 - `style`은 선택값이며 이 요청에만 임시 적용된다. 서버 기본 스타일은 바뀌지 않는다.
 - 봇 멘션이나 자동 응답에서도 `efficient 스타일로 답해줘`, `study 스타일로 설명해줘`처럼 말하면 이번 답변에만 해당 스타일을 임시 적용한다.
-- 사용 가능한 style 값: 기본 스타일 `default`, `classic`, `efficient`, `study`, `grok`, `spicy` 및 해당 서버에 `/style add`로 추가한 스타일.
+- 사용 가능한 style 값: 기본 스타일 `default`, `classic`, `efficient`, `study`, `grok`, `spicy`, `kids` 및 해당 서버에 `/style add`로 추가한 스타일.
 - 예시: `/ai message:오늘 회의 안건 정리해줘 style:study`
 
 명령어: 자동 응답 채널 관리
@@ -60,14 +60,15 @@ SELF_USAGE_MANUAL = """\
 - 메시지 내용을 읽으려면 Discord Developer Portal에서 Message Content Intent가 켜져 있어야 한다.
 
 명령어: AI 스타일 관리
-- `/style set style:<default|classic|efficient|study|grok|spicy|서버_커스텀_스타일>`
+- `/style set style:<default|classic|efficient|study|grok|spicy|kids|서버_커스텀_스타일>`
   - 서버 기본 AI 스타일을 설정한다.
   - 관리자 또는 Manage Guild 권한이 필요하다.
 - `/style show`
   - 현재 서버의 기본 AI 스타일과 채널별 스타일 설정을 보여준다.
   - 모든 사용자가 사용할 수 있다.
 - `/style presets`
-  - 사용 가능한 스타일 목록, 설명, 시스템 프롬프트를 보여준다.
+  - 사용 가능한 스타일 이름과 설명을 먼저 보여준다.
+  - slash command에서는 메뉴에서 스타일을 선택해 시스템 프롬프트를 자세히 볼 수 있다.
   - 모든 사용자가 사용할 수 있다.
 - `/style add name:<이름> description:<간단한 설명> prompt:<시스템 프롬프트>`
   - 이 서버에만 존재하는 스타일을 추가한다.
@@ -92,6 +93,7 @@ SELF_USAGE_MANUAL = """\
 - `study`: 이해와 학습을 돕는 답변.
 - `grok`: 그록같이 재치 있고 직설적인 답변.
 - `spicy`: 엄청 맵고 거침없는 답변.
+- `kids`: 잼민이처럼 까불고 시비 거는 장난스러운 답변.
 - `/style add`로 추가한 스타일: 해당 서버에서만 사용할 수 있으며, `/ai style:<이름>` 또는 `/style set style:<이름>`으로 사용할 수 있다.
 
 자연어 에이전트 도구: 봇 자체 설정

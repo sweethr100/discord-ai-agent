@@ -30,7 +30,6 @@ bot/
     agent_actions.py
   agent/
     agent.py
-    system_prompt.py
     tools/
       __init__.py
   providers/
@@ -179,7 +178,7 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 ### AI 스타일 관리
 
 ```text
-/style set style:<default|classic|efficient|study|grok|spicy|서버_커스텀_스타일>
+/style set style:<default|classic|efficient|study|grok|spicy|kids|서버_커스텀_스타일>
 /style show
 /style presets
 /style add name:<이름> description:<간단한 설명> prompt:<시스템 프롬프트>
@@ -201,9 +200,10 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 - `study`: 이해와 학습을 돕는 답변
 - `grok`: 그록같이 재치 있고 직설적인 답변
 - `spicy`: 엄청 맵고 거침없는 답변
+- `kids`: 잼민이처럼 까불고 시비 거는 장난스러운 답변
 - `/style add`로 추가한 스타일: 해당 서버에서만 사용할 수 있는 커스텀 스타일
 
-`/style presets`는 각 스타일의 설명과 시스템 프롬프트를 함께 보여줍니다.
+`/style presets`는 각 스타일의 이름과 설명만 먼저 보여줍니다. 시스템 프롬프트는 아래 메뉴에서 스타일을 골라 자세히 볼 수 있습니다.
 `/style add`로 추가한 스타일은 다른 서버에는 보이지 않고, `/ai style:<이름>` 또는 `/style set style:<이름>`에서 autocomplete로 선택할 수 있습니다.
 `/style channel`로 특정 채널에만 다른 스타일을 적용할 수 있고, `server_default`를 선택하면 채널별 설정을 제거합니다.
 
@@ -366,21 +366,17 @@ LOCAL_MODEL=your-served-model
 LOCAL_API_KEY=
 ```
 
-## 시스템 프롬프트
+## 기본 스타일 프롬프트
 
-기본값:
+`SYSTEM_PROMPT` 환경 변수는 사용하지 않습니다. 기본 응답 지침은 `default` 스타일 프롬프트에 들어 있습니다.
+
+기본 `default` 스타일 프롬프트:
 
 ```text
 너는 디스코드 서버에서 동작하는 친절하고 유용한 AI 에이전트다. 기본적으로 한국어로 짧지만 실속 있게 답하라. 사용자가 자세히 요청할 때만 길게 설명하라. Discord에서 지원되는 Markdown만 사용하라.
 ```
 
-`.env`에서 바꿀 수 있습니다.
-
-```env
-SYSTEM_PROMPT=너는 한국어로 짧지만 실속 있게 답하는 Discord AI 도우미다.
-```
-
-서버별 스타일은 `/style` 명령어로 별도 관리합니다. `SYSTEM_PROMPT`는 기본 바탕 프롬프트이고, `/style add`로 추가한 스타일의 시스템 프롬프트는 이 기본 바탕 프롬프트 위에 스타일 지침으로 적용됩니다.
+서버별 스타일은 `/style` 명령어로 별도 관리합니다. `/style add`로 추가한 스타일의 시스템 프롬프트는 해당 스타일을 선택했을 때 그대로 적용됩니다.
 
 ## Discord Markdown 제한
 

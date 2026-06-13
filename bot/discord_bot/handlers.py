@@ -103,7 +103,7 @@ async def handle_ai_request(
         )
         custom_style = bot.settings.get_custom_style(guild_id, effective_style)
         system_prompt = build_system_prompt(
-            base_prompt=bot.config.system_prompt,
+            base_prompt="",
             style=effective_style,
             custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
             style_prompt=custom_style.prompt if custom_style else None,
@@ -662,6 +662,13 @@ def _extract_requested_style(prompt: str, bot: "DiscordAIBot", guild_id: int | N
         "스파이시": "spicy",
         "spicy": "spicy",
         "19금": "spicy",
+        "잼민이": "kids",
+        "잼민": "kids",
+        "키즈": "kids",
+        "kids": "kids",
+        "시비": "kids",
+        "까불": "kids",
+        "초딩": "kids",
         "진지": "efficient",
         "진지한": "efficient",
         "전문적": "efficient",

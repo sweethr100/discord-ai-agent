@@ -125,7 +125,7 @@ ACTION_PLANNER_PROMPT = """\
 - 현재 채널을 뜻하면 channel을 "current"로 넣어라.
 - type은 text, voice, stage, category, forum, media 중 하나만 사용하라.
 - mode는 always, question_only, keyword 중 하나만 사용하라.
-- style은 기본 스타일(default, classic, efficient, study, grok, spicy) 또는 서버에 추가된 스타일 이름을 사용하라.
+- style은 기본 스타일(default, classic, efficient, study, grok, spicy, kids) 또는 서버에 추가된 스타일 이름을 사용하라.
 - style_add/style_modify의 name은 영어 소문자, 숫자, _, - 로 된 1~32자 이름이다.
 - slowmode는 초 단위 정수다.
 - position, bitrate, user_limit, default_auto_archive_duration, default_thread_slowmode는 정수다.

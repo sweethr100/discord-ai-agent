@@ -5,8 +5,6 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-from agent.system_prompt import DEFAULT_SYSTEM_PROMPT
-
 
 SUPPORTED_PROVIDERS = {"openai", "gemini", "anthropic", "local"}
 
@@ -44,7 +42,6 @@ class AppConfig:
     discord_token: str
     discord_guild_id: int | None
     ai_provider: str
-    system_prompt: str
     ai_temperature: float
     ai_max_tokens: int | None
     channel_context_messages: int
@@ -117,7 +114,6 @@ def load_config() -> AppConfig:
         discord_token=_get_env("DISCORD_TOKEN"),
         discord_guild_id=_get_optional_int("DISCORD_GUILD_ID"),
         ai_provider=provider,
-        system_prompt=_get_env("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
         ai_temperature=_get_float("AI_TEMPERATURE", 0.7),
         ai_max_tokens=_get_optional_int("AI_MAX_TOKENS"),
         channel_context_messages=channel_context_messages if channel_context_messages is not None else 20,

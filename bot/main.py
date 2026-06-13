@@ -26,7 +26,7 @@ async def async_main() -> None:
 
     agent = AIAgent(
         provider=provider,
-        system_prompt=config.system_prompt,
+        system_prompt="",
         temperature=config.ai_temperature,
         max_tokens=config.ai_max_tokens,
     )
