@@ -24,7 +24,7 @@ SELF_USAGE_MANUAL = """\
 - 모든 사용자가 사용할 수 있다.
 - `message`는 필수다.
 - `style`은 선택값이며 이 요청에만 임시 적용된다. 서버 기본 스타일은 바뀌지 않는다.
-- 사용 가능한 style 값: `default`, `grok`, `serious`, `teacher`, `coder`, `korean_friend`, `custom`.
+- 사용 가능한 style 값: 기본 스타일 `default`, `grok`, `serious`, `teacher`, `coder`, `korean_friend`, `custom` 및 해당 서버에 `/style add`로 추가한 스타일.
 - 예시: `/ai message:오늘 회의 안건 정리해줘 style:teacher`
 
 명령어: 자동 응답 채널 관리
@@ -56,24 +56,31 @@ SELF_USAGE_MANUAL = """\
 - `.env`의 `CHANNEL_CONTEXT_MESSAGES`로 읽을 메시지 수를 설정한다. 기본값은 20이다.
 - `.env`의 `CHANNEL_CONTEXT_CHAR_LIMIT`로 문맥 최대 글자 수를 설정한다. 기본값은 6000이다.
 - 둘 중 하나를 0으로 설정하면 문맥 읽기가 꺼진다.
-- 서버 관리 자연어 액션 판단에는 과거 문맥을 넣지 않는다. 과거 대화가 실수로 실행 명령처럼 처리되는 것을 막기 위해서다.
+- 서버 관리 도구 호출도 최근 채널 문맥을 참고할 수 있지만, 과거 메시지만으로 새 작업을 실행하지 않고 현재 요청에 실행 의도가 있어야 한다.
 - 봇에게 해당 채널의 View Channel 및 Read Message History 권한이 필요하다.
 - 메시지 내용을 읽으려면 Discord Developer Portal에서 Message Content Intent가 켜져 있어야 한다.
 
 명령어: AI 스타일 관리
-- `/style set style:<default|grok|serious|teacher|coder|korean_friend|custom>`
+- `/style set style:<default|grok|serious|teacher|coder|korean_friend|custom|서버_커스텀_스타일>`
   - 서버 기본 AI 스타일을 설정한다.
   - 관리자 또는 Manage Guild 권한이 필요하다.
 - `/style show`
   - 현재 서버의 기본 AI 스타일과 custom 프롬프트 설정 여부를 보여준다.
   - 모든 사용자가 사용할 수 있다.
 - `/style presets`
-  - 사용 가능한 스타일 목록을 보여준다.
+  - 사용 가능한 스타일 목록, 설명, 시스템 프롬프트를 보여준다.
   - 모든 사용자가 사용할 수 있다.
 - `/style custom prompt:<내용>`
   - `custom` 스타일의 시스템 프롬프트를 저장한다.
   - 관리자 또는 Manage Guild 권한이 필요하다.
   - 저장 후 `/style set style:custom`으로 서버 기본 스타일로 지정할 수 있다.
+- `/style add name:<이름> description:<간단한 설명> prompt:<시스템 프롬프트>`
+  - 이 서버에만 존재하는 스타일을 추가한다.
+  - 스타일 이름은 영어 소문자, 숫자, `_`, `-`만 사용한다.
+  - 관리자 또는 Manage Guild 권한이 필요하다.
+- `/style modify name:<스타일 이름> description:<선택> prompt:<선택>`
+  - 이 서버에 추가한 스타일의 설명이나 시스템 프롬프트를 수정한다.
+  - 관리자 또는 Manage Guild 권한이 필요하다.
 
 스타일 설명
 - `default`: 기본 친절한 Discord AI 에이전트.
@@ -83,6 +90,7 @@ SELF_USAGE_MANUAL = """\
 - `coder`: 개발자에게 유용한 코드 중심 답변.
 - `korean_friend`: 한국어로 편하게 말해주는 친구 스타일.
 - `custom`: 서버 관리자가 설정한 커스텀 시스템 프롬프트.
+- `/style add`로 추가한 스타일: 해당 서버에서만 사용할 수 있으며, `/ai style:<이름>` 또는 `/style set style:<이름>`으로 사용할 수 있다.
 
 자연어 에이전트 도구: 봇 자체 설정
 - 사용자는 `/ai` 또는 봇 멘션으로 자연어 요청을 보낼 수 있다.
@@ -90,7 +98,7 @@ SELF_USAGE_MANUAL = """\
 - 예: `/ai message:#help 자동응답을 keyword 모드로 바꾸고 키워드는 질문,도와줘로 해줘`
 - 예: `@봇 서버 기본 AI 스타일을 coder로 바꿔줘`
 - 예: `@봇 custom 스타일 프롬프트를 "한국어로 짧게 답해"로 저장해줘`
-- 실행 가능한 자체 설정 작업: 자동 응답 채널 추가/제거/목록/모드 변경, AI 스타일 set/show/presets/custom.
+- 실행 가능한 자체 설정 작업: 자동 응답 채널 추가/제거/목록/모드 변경, AI 스타일 set/show/presets/custom/add/modify.
 - 권한은 기존 slash command와 같다. 자동 응답 채널 관리는 Manage Channels, 스타일 set/custom은 Manage Guild가 필요하다.
 
 자연어 에이전트 도구: 서버 관리

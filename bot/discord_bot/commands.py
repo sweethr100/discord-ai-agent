@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import discord
@@ -8,28 +9,38 @@ from discord import app_commands
 from agent.styles import STYLE_NAMES, STYLE_PRESETS, format_style_presets, is_valid_style
 from discord_bot.handlers import handle_ai_request
 from discord_bot.settings_store import AUTOCHANNEL_MODES
+from utils.split_message import split_discord_message
 
 if TYPE_CHECKING:
     from discord_bot.client import DiscordAIBot
 
 
-STYLE_CHOICES = [
-    app_commands.Choice(name=style, value=style)
-    for style in STYLE_NAMES
-]
 MODE_CHOICES = [
     app_commands.Choice(name=mode, value=mode)
     for mode in AUTOCHANNEL_MODES
 ]
+STYLE_NAME_PATTERN = re.compile(r"^[a-z0-9_-]{1,32}$")
 
 
 def register_commands(bot: "DiscordAIBot") -> None:
+    async def style_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return _style_choices(bot, interaction, current, include_builtin=True, include_custom=True)
+
+    async def custom_style_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return _style_choices(bot, interaction, current, include_builtin=False, include_custom=True)
+
     @bot.tree.command(name="ai", description="AI에게 직접 질문합니다.")
     @app_commands.describe(
         message="AI에게 보낼 내용",
         style="이 요청에만 임시로 적용할 AI 스타일",
     )
-    @app_commands.choices(style=STYLE_CHOICES)
+    @app_commands.autocomplete(style=style_autocomplete)
     async def ai_command(
         interaction: discord.Interaction,
         message: str,
@@ -202,7 +213,7 @@ def register_commands(bot: "DiscordAIBot") -> None:
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(style="서버 기본값으로 사용할 AI 스타일")
-    @app_commands.choices(style=STYLE_CHOICES)
+    @app_commands.autocomplete(style=style_autocomplete)
     async def style_set(interaction: discord.Interaction, style: str) -> None:
         if not await _require_manage_guild(interaction):
             return
@@ -212,7 +223,8 @@ def register_commands(bot: "DiscordAIBot") -> None:
             await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
             return
 
-        if not is_valid_style(style):
+        style = _normalize_style_name(style) if not is_valid_style(style.strip()) else style.strip()
+        if not _style_exists(bot, guild_id, style):
             await _send_ephemeral(interaction, "지원하지 않는 스타일이에요.")
             return
 
@@ -231,20 +243,122 @@ def register_commands(bot: "DiscordAIBot") -> None:
             return
 
         style = bot.settings.get_default_style(guild_id)
-        preset = STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
+        custom_style = bot.settings.get_custom_style(guild_id, style)
+        preset = custom_style or STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
         custom_configured = bool(bot.settings.get_custom_style_prompt(guild_id))
         custom_status = "설정됨" if custom_configured else "미설정"
+        prompt = getattr(preset, "prompt", "") or "기본 SYSTEM_PROMPT를 그대로 사용"
         await interaction.response.send_message(
             f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\n"
-            f"custom 프롬프트: {custom_status}",
+            f"시스템 프롬프트: {prompt}\n"
+            f"legacy custom 프롬프트: {custom_status}",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
     @style_group.command(name="presets", description="사용 가능한 AI 스타일 목록을 봅니다.")
     @app_commands.guild_only()
     async def style_presets(interaction: discord.Interaction) -> None:
+        guild_id = _get_guild_id(interaction)
+        await _send_command_chunks(
+            interaction,
+            split_discord_message(
+                format_style_presets(
+                    bot.settings.list_custom_styles(guild_id),
+                    custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
+                )
+            ),
+        )
+
+    @style_group.command(name="add", description="이 서버에만 사용할 AI 스타일을 추가합니다.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        name="추가할 스타일 이름. 영어 소문자, 숫자, _, - 만 가능",
+        description="스타일의 간단한 설명",
+        prompt="이 스타일에 적용할 시스템 프롬프트",
+    )
+    async def style_add(
+        interaction: discord.Interaction,
+        name: str,
+        description: str,
+        prompt: str,
+    ) -> None:
+        if not await _require_manage_guild(interaction):
+            return
+
+        guild_id = _get_guild_id(interaction)
+        if guild_id is None:
+            await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
+            return
+
+        name = _normalize_style_name(name)
+        description = description.strip()
+        prompt = prompt.strip()
+        if not _is_valid_custom_style_name(name):
+            await _send_ephemeral(interaction, "스타일 이름은 영어 소문자, 숫자, `_`, `-`만 사용해서 1~32자로 입력해 주세요.")
+            return
+        if is_valid_style(name):
+            await _send_ephemeral(interaction, "기본 제공 스타일 이름과 같은 이름은 사용할 수 없어요.")
+            return
+        if bot.settings.get_custom_style(guild_id, name) is not None:
+            await _send_ephemeral(interaction, "이미 이 서버에 같은 이름의 스타일이 있어요. `/style modify`를 사용해 주세요.")
+            return
+        if not description or not prompt:
+            await _send_ephemeral(interaction, "설명과 시스템 프롬프트를 모두 입력해 주세요.")
+            return
+
+        bot.settings.upsert_custom_style(
+            guild_id,
+            name=name,
+            description=description,
+            prompt=prompt,
+        )
         await interaction.response.send_message(
-            format_style_presets(),
+            f"`{name}` 스타일을 이 서버에 추가했어요.",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @style_group.command(name="modify", description="이 서버에 추가한 AI 스타일을 수정합니다.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        name="수정할 서버 커스텀 스타일 이름",
+        description="새 설명. 비우면 기존 설명 유지",
+        prompt="새 시스템 프롬프트. 비우면 기존 프롬프트 유지",
+    )
+    @app_commands.autocomplete(name=custom_style_autocomplete)
+    async def style_modify(
+        interaction: discord.Interaction,
+        name: str,
+        description: str = "",
+        prompt: str = "",
+    ) -> None:
+        if not await _require_manage_guild(interaction):
+            return
+
+        guild_id = _get_guild_id(interaction)
+        if guild_id is None:
+            await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
+            return
+
+        name = _normalize_style_name(name)
+        description = description.strip()
+        prompt = prompt.strip()
+        if not description and not prompt:
+            await _send_ephemeral(interaction, "변경할 설명이나 시스템 프롬프트 중 하나는 입력해 주세요.")
+            return
+        if bot.settings.get_custom_style(guild_id, name) is None:
+            await _send_ephemeral(interaction, "이 서버에 추가된 스타일만 수정할 수 있어요.")
+            return
+
+        bot.settings.modify_custom_style(
+            guild_id,
+            name=name,
+            description=description or None,
+            prompt=prompt or None,
+        )
+        await interaction.response.send_message(
+            f"`{name}` 스타일을 수정했어요.",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -311,6 +425,71 @@ async def _send_ephemeral(interaction: discord.Interaction, content: str) -> Non
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
     )
+
+
+async def _send_command_chunks(
+    interaction: discord.Interaction,
+    chunks: list[str],
+) -> None:
+    if not chunks:
+        chunks = ["응답이 비어 있어요."]
+
+    if not interaction.response.is_done():
+        await interaction.response.send_message(
+            chunks[0],
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        start = 1
+    else:
+        start = 0
+
+    for chunk in chunks[start:]:
+        await interaction.followup.send(
+            chunk,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
+def _style_choices(
+    bot: "DiscordAIBot",
+    interaction: discord.Interaction,
+    current: str,
+    *,
+    include_builtin: bool,
+    include_custom: bool,
+) -> list[app_commands.Choice[str]]:
+    current = current.casefold().strip()
+    names: list[str] = []
+    if include_builtin:
+        names.extend(STYLE_NAMES)
+    if include_custom:
+        names.extend(style.name for style in bot.settings.list_custom_styles(interaction.guild_id))
+
+    seen: set[str] = set()
+    choices: list[app_commands.Choice[str]] = []
+    for name in names:
+        normalized = name.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if current and current not in normalized:
+            continue
+        choices.append(app_commands.Choice(name=name, value=name))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
+def _style_exists(bot: "DiscordAIBot", guild_id: int, style: str) -> bool:
+    return is_valid_style(style) or bot.settings.get_custom_style(guild_id, style) is not None
+
+
+def _normalize_style_name(name: str) -> str:
+    return name.strip().casefold().replace(" ", "_")
+
+
+def _is_valid_custom_style_name(name: str) -> bool:
+    return bool(STYLE_NAME_PATTERN.fullmatch(name))
 
 
 def _parse_keywords(keywords: str | None) -> list[str]:

@@ -102,6 +102,8 @@ python bot/main.py
 - `/style show`
 - `/style presets`
 - `/style custom`
+- `/style add`
+- `/style modify`
 
 - `DISCORD_GUILD_ID`를 넣으면 해당 서버에 즉시 등록됩니다. 개발 중에는 이 방식을 추천합니다.
 - `DISCORD_GUILD_ID`를 비우면 global command로 등록되며 Discord 반영에 시간이 걸릴 수 있습니다.
@@ -169,22 +171,24 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 
 - `CHANNEL_CONTEXT_MESSAGES=0` 또는 `CHANNEL_CONTEXT_CHAR_LIMIT=0`으로 설정하면 문맥 읽기를 끌 수 있습니다.
 - `/ai`, 봇 멘션, 자동 응답 채널 답변에 모두 적용됩니다.
-- 서버 관리 자연어 액션 판단에는 과거 문맥을 넣지 않습니다. 과거 대화가 실수로 실행 명령처럼 처리되는 것을 막기 위해서입니다.
+- 서버 관리 도구 호출도 최근 채널 문맥을 참고할 수 있습니다. 다만 과거 메시지만으로 새 작업을 실행하지 않고 현재 요청에 실행 의도가 있어야 합니다.
 - 봇에게 해당 채널의 **View Channel** 및 **Read Message History** 권한이 필요합니다.
 - 메시지 내용을 읽으려면 Discord Developer Portal에서 **Message Content Intent**가 켜져 있어야 합니다.
 
 ### AI 스타일 관리
 
 ```text
-/style set style:<default|grok|serious|teacher|coder|korean_friend|custom>
+/style set style:<default|grok|serious|teacher|coder|korean_friend|custom|서버_커스텀_스타일>
 /style show
 /style presets
 /style custom prompt:<내용>
+/style add name:<이름> description:<간단한 설명> prompt:<시스템 프롬프트>
+/style modify name:<스타일 이름> description:<선택> prompt:<선택>
 ```
 
 권한:
 
-- `/style set`, `/style custom`: 관리자 또는 **Manage Guild** 권한이 필요합니다.
+- `/style set`, `/style custom`, `/style add`, `/style modify`: 관리자 또는 **Manage Guild** 권한이 필요합니다.
 - `/style show`, `/style presets`: 모든 사용자가 볼 수 있습니다.
 
 스타일:
@@ -196,6 +200,10 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 - `coder`: 개발자에게 유용한 코드 중심 답변
 - `korean_friend`: 한국어로 편하게 말해주는 친구 스타일
 - `custom`: 서버 관리자가 설정한 커스텀 시스템 프롬프트
+- `/style add`로 추가한 스타일: 해당 서버에서만 사용할 수 있는 커스텀 스타일
+
+`/style presets`는 각 스타일의 설명과 시스템 프롬프트를 함께 보여줍니다.
+`/style add`로 추가한 스타일은 다른 서버에는 보이지 않고, `/ai style:<이름>` 또는 `/style set style:<이름>`에서 autocomplete로 선택할 수 있습니다.
 
 예시:
 
@@ -203,6 +211,8 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 /style presets
 /style custom prompt:너는 우리 서버에서 한국어로 짧고 실용적으로 답하는 AI 도우미다.
 /style set style:custom
+/style add name:news description:뉴스를 짧게 요약하는 스타일 prompt:핵심 사실, 배경, 영향 순서로 짧게 답하라.
+/style modify name:news description:뉴스 요약 특화 prompt:핵심 사실 3개와 다음 확인할 점 1개만 답하라.
 /style show
 ```
 
@@ -368,7 +378,7 @@ LOCAL_API_KEY=
 SYSTEM_PROMPT=너는 한국어로 짧지만 실속 있게 답하는 Discord AI 도우미다.
 ```
 
-서버별 스타일은 `/style` 명령어로 별도 관리합니다. `SYSTEM_PROMPT`는 기본 바탕 프롬프트이고, `custom` 스타일은 `/style custom`으로 설정한 프롬프트를 사용합니다.
+서버별 스타일은 `/style` 명령어로 별도 관리합니다. `SYSTEM_PROMPT`는 기본 바탕 프롬프트이고, `custom` 스타일은 `/style custom`으로 설정한 프롬프트를 사용합니다. `/style add`로 추가한 스타일의 시스템 프롬프트도 이 기본 바탕 프롬프트 위에 스타일 지침으로 적용됩니다.
 
 ## Discord Markdown 제한
 

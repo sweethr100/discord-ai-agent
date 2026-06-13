@@ -16,6 +16,13 @@ class AutoChannelSettings:
     keywords: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class GuildCustomStyle:
+    name: str
+    description: str
+    prompt: str
+
+
 class GuildSettingsStore:
     def __init__(self, path: str | Path = "data/guild_settings.json") -> None:
         self.path = Path(path)
@@ -41,6 +48,71 @@ class GuildSettingsStore:
         guild = self._ensure_guild(guild_id)
         guild["custom_style_prompt"] = prompt.strip()
         self._save()
+
+    def get_custom_style(self, guild_id: int | None, name: str) -> GuildCustomStyle | None:
+        if guild_id is None:
+            return None
+
+        styles = self._get_guild(guild_id).get("custom_styles", {})
+        if not isinstance(styles, dict):
+            return None
+
+        raw = styles.get(name)
+        if not isinstance(raw, dict):
+            return None
+
+        return self._to_custom_style(name, raw)
+
+    def list_custom_styles(self, guild_id: int | None) -> list[GuildCustomStyle]:
+        if guild_id is None:
+            return []
+
+        styles = self._get_guild(guild_id).get("custom_styles", {})
+        if not isinstance(styles, dict):
+            return []
+
+        result: list[GuildCustomStyle] = []
+        for name, raw in styles.items():
+            if isinstance(raw, dict):
+                result.append(self._to_custom_style(str(name), raw))
+        return sorted(result, key=lambda style: style.name.casefold())
+
+    def upsert_custom_style(
+        self,
+        guild_id: int,
+        *,
+        name: str,
+        description: str,
+        prompt: str,
+    ) -> None:
+        guild = self._ensure_guild(guild_id)
+        styles = guild.setdefault("custom_styles", {})
+        styles[name] = {
+            "description": description.strip(),
+            "prompt": prompt.strip(),
+        }
+        self._save()
+
+    def modify_custom_style(
+        self,
+        guild_id: int,
+        *,
+        name: str,
+        description: str | None = None,
+        prompt: str | None = None,
+    ) -> bool:
+        guild = self._ensure_guild(guild_id)
+        styles = guild.setdefault("custom_styles", {})
+        raw = styles.get(name)
+        if not isinstance(raw, dict):
+            return False
+
+        if description is not None:
+            raw["description"] = description.strip()
+        if prompt is not None:
+            raw["prompt"] = prompt.strip()
+        self._save()
+        return True
 
     def upsert_autochannel(
         self,
@@ -133,6 +205,7 @@ class GuildSettingsStore:
             {
                 "default_style": "default",
                 "custom_style_prompt": "",
+                "custom_styles": {},
                 "autochannels": {},
             },
         )
@@ -143,8 +216,16 @@ class GuildSettingsStore:
 
         guild.setdefault("default_style", "default")
         guild.setdefault("custom_style_prompt", "")
+        guild.setdefault("custom_styles", {})
         guild.setdefault("autochannels", {})
         return guild
+
+    def _to_custom_style(self, name: str, raw: dict[str, Any]) -> GuildCustomStyle:
+        return GuildCustomStyle(
+            name=name,
+            description=str(raw.get("description") or "").strip(),
+            prompt=str(raw.get("prompt") or "").strip(),
+        )
 
     def _to_autochannel_settings(
         self,

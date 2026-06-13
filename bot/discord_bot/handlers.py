@@ -94,10 +94,12 @@ async def handle_ai_request(
 
         guild_id = _get_guild_id(interaction, message)
         effective_style = style_name or bot.settings.get_default_style(guild_id)
+        custom_style = bot.settings.get_custom_style(guild_id, effective_style)
         system_prompt = build_system_prompt(
             base_prompt=bot.config.system_prompt,
             style=effective_style,
             custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
+            style_prompt=custom_style.prompt if custom_style else None,
         )
         channel_context = await build_channel_context(
             interaction=interaction,

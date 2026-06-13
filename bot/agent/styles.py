@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 from agent.self_manual import append_self_manual
 from agent.system_prompt import DEFAULT_SYSTEM_PROMPT
@@ -91,8 +92,16 @@ def build_system_prompt(
     base_prompt: str,
     style: str,
     custom_prompt: str = "",
+    style_prompt: str | None = None,
 ) -> str:
     base_prompt = (base_prompt or DEFAULT_SYSTEM_PROMPT).strip()
+
+    if style_prompt is not None:
+        prompt = style_prompt.strip()
+        if not prompt:
+            return append_self_manual(f"{base_prompt}\n\n{CONCISE_RESPONSE_GUIDE}")
+        return append_self_manual(f"{base_prompt}\n\n{CONCISE_RESPONSE_GUIDE}\n\n응답 스타일 지침:\n{prompt}")
+
     style = style if is_valid_style(style) else "default"
 
     if style == "custom":
@@ -106,8 +115,17 @@ def build_system_prompt(
     return append_self_manual(f"{base_prompt}\n\n{CONCISE_RESPONSE_GUIDE}\n\n응답 스타일 지침:\n{preset.prompt}")
 
 
-def format_style_presets() -> str:
+def format_style_presets(
+    custom_styles: Sequence[StylePreset] = (),
+    *,
+    custom_prompt: str = "",
+) -> str:
     lines = ["사용 가능한 AI 스타일:"]
     for preset in STYLE_PRESETS.values():
-        lines.append(f"- `{preset.name}`: {preset.description}")
+        prompt = custom_prompt.strip() if preset.name == "custom" and custom_prompt.strip() else preset.prompt
+        prompt = prompt or "기본 SYSTEM_PROMPT를 그대로 사용"
+        lines.append(f"- `{preset.name}`: {preset.description}\n  시스템 프롬프트: {prompt}")
+    for preset in custom_styles:
+        prompt = preset.prompt or "비어 있음"
+        lines.append(f"- `{preset.name}`: {preset.description}\n  시스템 프롬프트: {prompt}")
     return "\n".join(lines)

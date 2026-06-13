@@ -37,6 +37,8 @@ ACTION_PLANNER_PROMPT = """\
 - style_show: args
 - style_presets: args
 - style_custom: args prompt
+- style_add: args name, description, prompt
+- style_modify: args name, description, prompt
 - channel_create: args type, name, category, topic, slowmode, nsfw, bitrate, user_limit, position, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
 - channel_update: args channel, name, topic, slowmode, nsfw, bitrate, user_limit, category, position, sync_permissions, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
 - channel_delete: args channel
@@ -123,7 +125,8 @@ ACTION_PLANNER_PROMPT = """\
 - 현재 채널을 뜻하면 channel을 "current"로 넣어라.
 - type은 text, voice, stage, category, forum, media 중 하나만 사용하라.
 - mode는 always, question_only, keyword 중 하나만 사용하라.
-- style은 default, grok, serious, teacher, coder, korean_friend, custom 중 하나만 사용하라.
+- style은 기본 스타일(default, grok, serious, teacher, coder, korean_friend, custom) 또는 서버에 추가된 스타일 이름을 사용하라.
+- style_add/style_modify의 name은 영어 소문자, 숫자, _, - 로 된 1~32자 이름이다.
 - slowmode는 초 단위 정수다.
 - position, bitrate, user_limit, default_auto_archive_duration, default_thread_slowmode는 정수다.
 - video_quality_mode는 auto 또는 full 중 하나다.
@@ -162,6 +165,8 @@ ACTION_STATUS_LABELS = {
     "style_show": "AI 스타일 조회",
     "style_presets": "AI 스타일 목록 조회",
     "style_custom": "커스텀 스타일 저장",
+    "style_add": "AI 스타일 추가",
+    "style_modify": "AI 스타일 수정",
     "channel_create": "채널 생성",
     "channel_update": "채널 수정",
     "channel_delete": "채널 삭제",
@@ -706,9 +711,16 @@ async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
     elif action == "style_show":
         result = _style_show(context)
     elif action == "style_presets":
-        result = format_style_presets()
+        result = format_style_presets(
+            context.bot.settings.list_custom_styles(context.guild.id),
+            custom_prompt=context.bot.settings.get_custom_style_prompt(context.guild.id),
+        )
     elif action == "style_custom":
         result = _style_custom(context, args)
+    elif action == "style_add":
+        result = _style_add(context, args)
+    elif action == "style_modify":
+        result = _style_modify(context, args)
     elif action == "channel_create":
         result = await _channel_create(context, args)
     elif action == "channel_update":
@@ -959,7 +971,9 @@ def _style_set(context: ActionContext, args: dict[str, Any]) -> str:
 
     style = str(args.get("style", "")).strip()
     if not is_valid_style(style):
-        return f"지원하지 않는 스타일이에요. 사용 가능: {', '.join(f'`{name}`' for name in STYLE_NAMES)}"
+        style = _normalize_style_name(style)
+    if not _style_exists(context, style):
+        return f"지원하지 않는 스타일이에요. 사용 가능: {', '.join(f'`{name}`' for name in _available_style_names(context))}"
 
     context.bot.settings.set_default_style(context.guild.id, style)
     return f"서버 기본 AI 스타일을 `{style}`로 설정했어요."
@@ -967,10 +981,15 @@ def _style_set(context: ActionContext, args: dict[str, Any]) -> str:
 
 def _style_show(context: ActionContext) -> str:
     style = context.bot.settings.get_default_style(context.guild.id)
-    preset = STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
+    preset = context.bot.settings.get_custom_style(context.guild.id, style) or STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
     custom_configured = bool(context.bot.settings.get_custom_style_prompt(context.guild.id))
     custom_status = "설정됨" if custom_configured else "미설정"
-    return f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\ncustom 프롬프트: {custom_status}"
+    prompt = getattr(preset, "prompt", "") or "기본 SYSTEM_PROMPT를 그대로 사용"
+    return (
+        f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\n"
+        f"시스템 프롬프트: {prompt}\n"
+        f"legacy custom 프롬프트: {custom_status}"
+    )
 
 
 def _style_custom(context: ActionContext, args: dict[str, Any]) -> str:
@@ -983,6 +1002,68 @@ def _style_custom(context: ActionContext, args: dict[str, Any]) -> str:
 
     context.bot.settings.set_custom_style_prompt(context.guild.id, prompt)
     return "custom 스타일의 시스템 프롬프트를 저장했어요. 서버 기본값으로 쓰려면 `custom 스타일로 바꿔줘`라고 요청하면 돼요."
+
+
+def _style_add(context: ActionContext, args: dict[str, Any]) -> str:
+    if not _user_has(context, "manage_guild"):
+        return "이 작업은 관리자 또는 Manage Guild 권한이 필요해요."
+
+    name = _normalize_style_name(str(args.get("name") or ""))
+    description = str(args.get("description") or "").strip()
+    prompt = str(args.get("prompt") or "").strip()
+    if not _is_valid_custom_style_name(name):
+        return "스타일 이름은 영어 소문자, 숫자, `_`, `-`만 사용해서 1~32자로 입력해 주세요."
+    if is_valid_style(name):
+        return "기본 제공 스타일 이름과 같은 이름은 사용할 수 없어요."
+    if context.bot.settings.get_custom_style(context.guild.id, name) is not None:
+        return "이미 이 서버에 같은 이름의 스타일이 있어요."
+    if not description or not prompt:
+        return "스타일 설명과 시스템 프롬프트를 모두 알려주세요."
+
+    context.bot.settings.upsert_custom_style(
+        context.guild.id,
+        name=name,
+        description=description,
+        prompt=prompt,
+    )
+    return f"`{name}` 스타일을 이 서버에 추가했어요."
+
+
+def _style_modify(context: ActionContext, args: dict[str, Any]) -> str:
+    if not _user_has(context, "manage_guild"):
+        return "이 작업은 관리자 또는 Manage Guild 권한이 필요해요."
+
+    name = _normalize_style_name(str(args.get("name") or ""))
+    description = str(args.get("description") or "").strip()
+    prompt = str(args.get("prompt") or "").strip()
+    if context.bot.settings.get_custom_style(context.guild.id, name) is None:
+        return "이 서버에 추가된 스타일만 수정할 수 있어요."
+    if not description and not prompt:
+        return "변경할 설명이나 시스템 프롬프트 중 하나는 알려주세요."
+
+    context.bot.settings.modify_custom_style(
+        context.guild.id,
+        name=name,
+        description=description or None,
+        prompt=prompt or None,
+    )
+    return f"`{name}` 스타일을 수정했어요."
+
+
+def _style_exists(context: ActionContext, style: str) -> bool:
+    return is_valid_style(style) or context.bot.settings.get_custom_style(context.guild.id, style) is not None
+
+
+def _available_style_names(context: ActionContext) -> list[str]:
+    return [*STYLE_NAMES, *(style.name for style in context.bot.settings.list_custom_styles(context.guild.id))]
+
+
+def _normalize_style_name(name: str) -> str:
+    return name.strip().casefold().replace(" ", "_")
+
+
+def _is_valid_custom_style_name(name: str) -> bool:
+    return bool(re.fullmatch(r"[a-z0-9_-]{1,32}", name))
 
 
 async def _channel_create(context: ActionContext, args: dict[str, Any]) -> str:
