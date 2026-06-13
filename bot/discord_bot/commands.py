@@ -35,6 +35,19 @@ def register_commands(bot: "DiscordAIBot") -> None:
     ) -> list[app_commands.Choice[str]]:
         return _style_choices(bot, interaction, current, include_builtin=False, include_custom=True)
 
+    async def channel_style_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return _style_choices(
+            bot,
+            interaction,
+            current,
+            include_builtin=True,
+            include_custom=True,
+            include_server_default=True,
+        )
+
     @bot.tree.command(name="ai", description="AI에게 직접 질문합니다.")
     @app_commands.describe(
         message="AI에게 보낼 내용",
@@ -157,51 +170,6 @@ def register_commands(bot: "DiscordAIBot") -> None:
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @autochannel_group.command(name="mode", description="등록된 채널의 자동 응답 방식을 바꿉니다.")
-    @app_commands.guild_only()
-    @app_commands.default_permissions(manage_channels=True)
-    @app_commands.describe(
-        channel="모드를 변경할 채널",
-        mode="새 자동 응답 방식",
-        keywords="keyword 모드에서 반응할 쉼표로 구분된 키워드",
-    )
-    @app_commands.choices(mode=MODE_CHOICES)
-    async def autochannel_mode(
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        mode: str,
-        keywords: str = "",
-    ) -> None:
-        if not await _require_manage_channels(interaction):
-            return
-
-        guild_id = _get_guild_id(interaction)
-        if guild_id is None:
-            await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
-            return
-
-        existing = bot.settings.get_autochannel(guild_id=guild_id, channel_id=channel.id)
-        if existing is None:
-            await _send_ephemeral(interaction, f"{channel.mention} 채널은 아직 등록되어 있지 않아요.")
-            return
-
-        keyword_list = _parse_keywords(keywords)
-        if mode == "keyword" and not keyword_list:
-            await _send_ephemeral(interaction, "`keyword` 모드는 keywords 값을 하나 이상 입력해야 해요.")
-            return
-
-        bot.settings.upsert_autochannel(
-            guild_id=guild_id,
-            channel_id=channel.id,
-            mode=mode,
-            keywords=keyword_list if mode == "keyword" else [],
-        )
-        await interaction.response.send_message(
-            f"{channel.mention} 채널의 자동 응답 모드를 `{mode}`로 변경했어요."
-            f"{_format_keyword_suffix(keyword_list if mode == 'keyword' else [])}",
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
-
     bot.tree.add_command(autochannel_group)
 
     style_group = app_commands.Group(
@@ -245,13 +213,24 @@ def register_commands(bot: "DiscordAIBot") -> None:
         style = bot.settings.get_default_style(guild_id)
         custom_style = bot.settings.get_custom_style(guild_id, style)
         preset = custom_style or STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
-        custom_configured = bool(bot.settings.get_custom_style_prompt(guild_id))
-        custom_status = "설정됨" if custom_configured else "미설정"
-        prompt = getattr(preset, "prompt", "") or "기본 SYSTEM_PROMPT를 그대로 사용"
+        prompt = (
+            bot.settings.get_custom_style_prompt(guild_id)
+            if custom_style is None and style == "custom" and bot.settings.get_custom_style_prompt(guild_id)
+            else getattr(preset, "prompt", "")
+        )
+        prompt = prompt or "기본 SYSTEM_PROMPT를 그대로 사용"
+        channel_styles = bot.settings.list_channel_styles(guild_id)
+        channel_lines = []
+        if interaction.guild:
+            for channel_id, channel_style in channel_styles:
+                channel = interaction.guild.get_channel(channel_id)
+                channel_label = channel.mention if channel else f"<#{channel_id}>"
+                channel_lines.append(f"- {channel_label}: `{channel_style}`")
+        channel_text = "\n채널별 스타일:\n" + "\n".join(channel_lines) if channel_lines else ""
         await interaction.response.send_message(
             f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\n"
-            f"시스템 프롬프트: {prompt}\n"
-            f"legacy custom 프롬프트: {custom_status}",
+            f"시스템 프롬프트: {prompt}"
+            f"{channel_text}",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -362,11 +341,12 @@ def register_commands(bot: "DiscordAIBot") -> None:
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @style_group.command(name="custom", description="custom 스타일의 시스템 프롬프트를 설정합니다.")
+    @style_group.command(name="remove", description="이 서버에 추가한 AI 스타일을 삭제합니다.")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
-    @app_commands.describe(prompt="custom 스타일로 사용할 시스템 프롬프트")
-    async def style_custom(interaction: discord.Interaction, prompt: str) -> None:
+    @app_commands.describe(name="삭제할 서버 커스텀 스타일 이름")
+    @app_commands.autocomplete(name=custom_style_autocomplete)
+    async def style_remove(interaction: discord.Interaction, name: str) -> None:
         if not await _require_manage_guild(interaction):
             return
 
@@ -375,14 +355,56 @@ def register_commands(bot: "DiscordAIBot") -> None:
             await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
             return
 
-        prompt = prompt.strip()
-        if not prompt:
-            await _send_ephemeral(interaction, "custom 프롬프트 내용을 입력해 주세요.")
+        name = _normalize_style_name(name)
+        if bot.settings.get_custom_style(guild_id, name) is None:
+            await _send_ephemeral(interaction, "이 서버에 추가된 스타일만 삭제할 수 있어요.")
             return
 
-        bot.settings.set_custom_style_prompt(guild_id, prompt)
+        bot.settings.remove_custom_style(guild_id, name)
         await interaction.response.send_message(
-            "custom 스타일의 시스템 프롬프트를 저장했어요. `/style set style:custom`으로 기본값으로 쓸 수 있어요.",
+            f"`{name}` 스타일을 삭제했어요. 기본값이나 채널 스타일로 쓰고 있었다면 `default`로 되돌렸어요.",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @style_group.command(name="channel", description="특정 채널의 AI 스타일을 설정합니다.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(
+        channel="스타일을 적용할 채널",
+        style="채널에 적용할 스타일. server_default는 채널별 설정 제거",
+    )
+    @app_commands.autocomplete(style=channel_style_autocomplete)
+    async def style_channel(
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        style: str,
+    ) -> None:
+        if not await _require_manage_guild(interaction):
+            return
+
+        guild_id = _get_guild_id(interaction)
+        if guild_id is None:
+            await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
+            return
+
+        style = _normalize_style_name(style) if not is_valid_style(style.strip()) else style.strip()
+        if style == "server_default":
+            removed = bot.settings.remove_channel_style(guild_id, channel.id)
+            message = (
+                f"{channel.mention} 채널의 채널별 스타일 설정을 제거했어요."
+                if removed
+                else f"{channel.mention} 채널에는 채널별 스타일 설정이 없어요."
+            )
+            await interaction.response.send_message(message, allowed_mentions=discord.AllowedMentions.none())
+            return
+
+        if not _style_exists(bot, guild_id, style):
+            await _send_ephemeral(interaction, "지원하지 않는 스타일이에요.")
+            return
+
+        bot.settings.set_channel_style(guild_id, channel.id, style)
+        await interaction.response.send_message(
+            f"{channel.mention} 채널의 AI 스타일을 `{style}`로 설정했어요.",
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -457,9 +479,12 @@ def _style_choices(
     *,
     include_builtin: bool,
     include_custom: bool,
+    include_server_default: bool = False,
 ) -> list[app_commands.Choice[str]]:
     current = current.casefold().strip()
     names: list[str] = []
+    if include_server_default:
+        names.append("server_default")
     if include_builtin:
         names.extend(STYLE_NAMES)
     if include_custom:

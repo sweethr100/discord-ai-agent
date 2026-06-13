@@ -32,13 +32,13 @@ ACTION_PLANNER_PROMPT = """\
 - autochannel_add: args channel, mode, keywords
 - autochannel_remove: args channel
 - autochannel_list: args
-- autochannel_mode: args channel, mode, keywords
 - style_set: args style
 - style_show: args
 - style_presets: args
-- style_custom: args prompt
 - style_add: args name, description, prompt
 - style_modify: args name, description, prompt
+- style_remove: args name
+- style_channel: args channel, style
 - channel_create: args type, name, category, topic, slowmode, nsfw, bitrate, user_limit, position, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
 - channel_update: args channel, name, topic, slowmode, nsfw, bitrate, user_limit, category, position, sync_permissions, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
 - channel_delete: args channel
@@ -160,13 +160,13 @@ ACTION_STATUS_LABELS = {
     "autochannel_add": "자동 응답 채널 추가",
     "autochannel_remove": "자동 응답 채널 제거",
     "autochannel_list": "자동 응답 채널 조회",
-    "autochannel_mode": "자동 응답 채널 모드 변경",
     "style_set": "AI 스타일 설정",
     "style_show": "AI 스타일 조회",
     "style_presets": "AI 스타일 목록 조회",
-    "style_custom": "커스텀 스타일 저장",
     "style_add": "AI 스타일 추가",
     "style_modify": "AI 스타일 수정",
+    "style_remove": "AI 스타일 삭제",
+    "style_channel": "채널별 AI 스타일 설정",
     "channel_create": "채널 생성",
     "channel_update": "채널 수정",
     "channel_delete": "채널 삭제",
@@ -389,7 +389,6 @@ async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> st
     if plan.action in {
         "autochannel_add",
         "autochannel_remove",
-        "autochannel_mode",
         "channel_update",
         "channel_delete",
         "channel_clone",
@@ -400,6 +399,7 @@ async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> st
         "thread_create",
         "webhook_create",
         "webhook_list",
+        "style_channel",
     }:
         channel = _resolve_guild_channel(context, plan.args.get("channel"))
         if channel is None:
@@ -704,8 +704,6 @@ async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
         result = await _autochannel_remove(context, args)
     elif action == "autochannel_list":
         result = _autochannel_list(context)
-    elif action == "autochannel_mode":
-        result = await _autochannel_mode(context, args)
     elif action == "style_set":
         result = _style_set(context, args)
     elif action == "style_show":
@@ -715,12 +713,14 @@ async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
             context.bot.settings.list_custom_styles(context.guild.id),
             custom_prompt=context.bot.settings.get_custom_style_prompt(context.guild.id),
         )
-    elif action == "style_custom":
-        result = _style_custom(context, args)
     elif action == "style_add":
         result = _style_add(context, args)
     elif action == "style_modify":
         result = _style_modify(context, args)
+    elif action == "style_remove":
+        result = _style_remove(context, args)
+    elif action == "style_channel":
+        result = _style_channel(context, args)
     elif action == "channel_create":
         result = await _channel_create(context, args)
     elif action == "channel_update":
@@ -933,38 +933,6 @@ def _autochannel_list(context: ActionContext) -> str:
     return "\n".join(lines)
 
 
-async def _autochannel_mode(context: ActionContext, args: dict[str, Any]) -> str:
-    if not _user_has(context, "manage_channels"):
-        return "이 작업은 관리자 또는 Manage Channels 권한이 필요해요."
-
-    channel = _resolve_text_channel(context, args.get("channel"))
-    if channel is None:
-        return "모드를 바꿀 자동 응답 채널을 찾지 못했어요. 채널을 멘션해서 다시 요청해 주세요."
-
-    existing = context.bot.settings.get_autochannel(
-        guild_id=context.guild.id,
-        channel_id=channel.id,
-    )
-    if existing is None:
-        return f"{channel.mention} 채널은 아직 자동 응답 채널로 등록되어 있지 않아요."
-
-    mode = str(args.get("mode", "always"))
-    if mode not in AUTOCHANNEL_MODES:
-        return f"mode는 {', '.join(f'`{mode}`' for mode in AUTOCHANNEL_MODES)} 중 하나여야 해요."
-
-    keywords = _normalize_keywords(args.get("keywords"))
-    if mode == "keyword" and not keywords:
-        return "`keyword` 모드는 키워드가 하나 이상 필요해요."
-
-    context.bot.settings.upsert_autochannel(
-        guild_id=context.guild.id,
-        channel_id=channel.id,
-        mode=mode,
-        keywords=keywords if mode == "keyword" else [],
-    )
-    return f"{channel.mention} 채널의 자동 응답 모드를 `{mode}`로 변경했어요.{_keyword_suffix(keywords if mode == 'keyword' else [])}"
-
-
 def _style_set(context: ActionContext, args: dict[str, Any]) -> str:
     if not _user_has(context, "manage_guild"):
         return "이 작업은 관리자 또는 Manage Guild 권한이 필요해요."
@@ -982,26 +950,26 @@ def _style_set(context: ActionContext, args: dict[str, Any]) -> str:
 def _style_show(context: ActionContext) -> str:
     style = context.bot.settings.get_default_style(context.guild.id)
     preset = context.bot.settings.get_custom_style(context.guild.id, style) or STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
-    custom_configured = bool(context.bot.settings.get_custom_style_prompt(context.guild.id))
-    custom_status = "설정됨" if custom_configured else "미설정"
-    prompt = getattr(preset, "prompt", "") or "기본 SYSTEM_PROMPT를 그대로 사용"
-    return (
-        f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\n"
-        f"시스템 프롬프트: {prompt}\n"
-        f"legacy custom 프롬프트: {custom_status}"
+    prompt = (
+        context.bot.settings.get_custom_style_prompt(context.guild.id)
+        if context.bot.settings.get_custom_style(context.guild.id, style) is None
+        and style == "custom"
+        and context.bot.settings.get_custom_style_prompt(context.guild.id)
+        else getattr(preset, "prompt", "")
     )
-
-
-def _style_custom(context: ActionContext, args: dict[str, Any]) -> str:
-    if not _user_has(context, "manage_guild"):
-        return "이 작업은 관리자 또는 Manage Guild 권한이 필요해요."
-
-    prompt = str(args.get("prompt", "")).strip()
-    if not prompt:
-        return "custom 스타일의 시스템 프롬프트 내용을 함께 알려주세요."
-
-    context.bot.settings.set_custom_style_prompt(context.guild.id, prompt)
-    return "custom 스타일의 시스템 프롬프트를 저장했어요. 서버 기본값으로 쓰려면 `custom 스타일로 바꿔줘`라고 요청하면 돼요."
+    prompt = prompt or "기본 SYSTEM_PROMPT를 그대로 사용"
+    lines = [
+        f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\n"
+        f"시스템 프롬프트: {prompt}"
+    ]
+    channel_styles = context.bot.settings.list_channel_styles(context.guild.id)
+    if channel_styles:
+        lines.append("채널별 스타일:")
+        for channel_id, channel_style in channel_styles:
+            channel = context.guild.get_channel(channel_id)
+            label = channel.mention if channel else f"<#{channel_id}>"
+            lines.append(f"- {label}: `{channel_style}`")
+    return "\n".join(lines)
 
 
 def _style_add(context: ActionContext, args: dict[str, Any]) -> str:
@@ -1048,6 +1016,41 @@ def _style_modify(context: ActionContext, args: dict[str, Any]) -> str:
         prompt=prompt or None,
     )
     return f"`{name}` 스타일을 수정했어요."
+
+
+def _style_remove(context: ActionContext, args: dict[str, Any]) -> str:
+    if not _user_has(context, "manage_guild"):
+        return "이 작업은 관리자 또는 Manage Guild 권한이 필요해요."
+
+    name = _normalize_style_name(str(args.get("name") or ""))
+    if context.bot.settings.get_custom_style(context.guild.id, name) is None:
+        return "이 서버에 추가된 스타일만 삭제할 수 있어요."
+
+    context.bot.settings.remove_custom_style(context.guild.id, name)
+    return f"`{name}` 스타일을 삭제했어요. 기본값이나 채널 스타일로 쓰고 있었다면 `default`로 되돌렸어요."
+
+
+def _style_channel(context: ActionContext, args: dict[str, Any]) -> str:
+    if not _user_has(context, "manage_guild"):
+        return "이 작업은 관리자 또는 Manage Guild 권한이 필요해요."
+
+    channel = _resolve_text_channel(context, args.get("channel"))
+    if channel is None:
+        return "스타일을 적용할 텍스트 채널을 찾지 못했어요."
+
+    style = str(args.get("style") or "").strip()
+    if not is_valid_style(style):
+        style = _normalize_style_name(style)
+    if style == "server_default":
+        removed = context.bot.settings.remove_channel_style(context.guild.id, channel.id)
+        if removed:
+            return f"{channel.mention} 채널의 채널별 스타일 설정을 제거했어요."
+        return f"{channel.mention} 채널에는 채널별 스타일 설정이 없어요."
+    if not _style_exists(context, style):
+        return f"지원하지 않는 스타일이에요. 사용 가능: {', '.join(f'`{name}`' for name in _available_style_names(context))}"
+
+    context.bot.settings.set_channel_style(context.guild.id, channel.id, style)
+    return f"{channel.mention} 채널의 AI 스타일을 `{style}`로 설정했어요."
 
 
 def _style_exists(context: ActionContext, style: str) -> bool:

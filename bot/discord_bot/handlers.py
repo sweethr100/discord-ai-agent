@@ -93,7 +93,12 @@ async def handle_ai_request(
             )
 
         guild_id = _get_guild_id(interaction, message)
-        effective_style = style_name or bot.settings.get_default_style(guild_id)
+        channel_id = _get_channel_id(interaction, message)
+        effective_style = (
+            style_name
+            or bot.settings.get_channel_style(guild_id, channel_id)
+            or bot.settings.get_default_style(guild_id)
+        )
         custom_style = bot.settings.get_custom_style(guild_id, effective_style)
         system_prompt = build_system_prompt(
             base_prompt=bot.config.system_prompt,
@@ -607,6 +612,17 @@ def _get_guild_id(
         return interaction.guild_id
     if message and message.guild:
         return message.guild.id
+    return None
+
+
+def _get_channel_id(
+    interaction: discord.Interaction | None,
+    message: discord.Message | None,
+) -> int | None:
+    if interaction and interaction.channel:
+        return interaction.channel.id
+    if message and message.channel:
+        return message.channel.id
     return None
 
 

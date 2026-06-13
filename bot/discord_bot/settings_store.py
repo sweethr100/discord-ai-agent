@@ -39,6 +39,47 @@ class GuildSettingsStore:
         guild["default_style"] = style
         self._save()
 
+    def get_channel_style(self, guild_id: int | None, channel_id: int | None) -> str:
+        if guild_id is None or channel_id is None:
+            return ""
+        channel_styles = self._get_guild(guild_id).get("channel_styles", {})
+        if not isinstance(channel_styles, dict):
+            return ""
+        return str(channel_styles.get(str(channel_id)) or "").strip()
+
+    def set_channel_style(self, guild_id: int, channel_id: int, style: str) -> None:
+        guild = self._ensure_guild(guild_id)
+        channel_styles = guild.setdefault("channel_styles", {})
+        channel_styles[str(channel_id)] = style
+        self._save()
+
+    def remove_channel_style(self, guild_id: int, channel_id: int) -> bool:
+        guild = self._ensure_guild(guild_id)
+        channel_styles = guild.setdefault("channel_styles", {})
+        removed = channel_styles.pop(str(channel_id), None) is not None
+        if removed:
+            self._save()
+        return removed
+
+    def list_channel_styles(self, guild_id: int | None) -> list[tuple[int, str]]:
+        if guild_id is None:
+            return []
+
+        channel_styles = self._get_guild(guild_id).get("channel_styles", {})
+        if not isinstance(channel_styles, dict):
+            return []
+
+        result: list[tuple[int, str]] = []
+        for channel_id_text, style in channel_styles.items():
+            try:
+                channel_id = int(channel_id_text)
+            except ValueError:
+                continue
+            style_name = str(style).strip()
+            if style_name:
+                result.append((channel_id, style_name))
+        return sorted(result, key=lambda item: item[0])
+
     def get_custom_style_prompt(self, guild_id: int | None) -> str:
         if guild_id is None:
             return ""
@@ -111,6 +152,24 @@ class GuildSettingsStore:
             raw["description"] = description.strip()
         if prompt is not None:
             raw["prompt"] = prompt.strip()
+        self._save()
+        return True
+
+    def remove_custom_style(self, guild_id: int, name: str) -> bool:
+        guild = self._ensure_guild(guild_id)
+        styles = guild.setdefault("custom_styles", {})
+        removed = styles.pop(name, None) is not None
+        if not removed:
+            return False
+
+        if guild.get("default_style") == name:
+            guild["default_style"] = "default"
+
+        channel_styles = guild.setdefault("channel_styles", {})
+        for channel_id, style in list(channel_styles.items()):
+            if style == name:
+                channel_styles.pop(channel_id, None)
+
         self._save()
         return True
 
@@ -206,6 +265,7 @@ class GuildSettingsStore:
                 "default_style": "default",
                 "custom_style_prompt": "",
                 "custom_styles": {},
+                "channel_styles": {},
                 "autochannels": {},
             },
         )
@@ -217,6 +277,7 @@ class GuildSettingsStore:
         guild.setdefault("default_style", "default")
         guild.setdefault("custom_style_prompt", "")
         guild.setdefault("custom_styles", {})
+        guild.setdefault("channel_styles", {})
         guild.setdefault("autochannels", {})
         return guild
 
