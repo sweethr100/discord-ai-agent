@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import discord
 
-from agent.styles import build_system_prompt
+from agent.styles import STYLE_NAMES, build_system_prompt, is_valid_style
 from discord_bot.agent_actions import (
     ActionContext,
     ActionPlan,
@@ -94,8 +94,10 @@ async def handle_ai_request(
 
         guild_id = _get_guild_id(interaction, message)
         channel_id = _get_channel_id(interaction, message)
+        requested_style = _extract_requested_style(prompt, bot, guild_id) if style_name is None else None
         effective_style = (
             style_name
+            or requested_style
             or bot.settings.get_channel_style(guild_id, channel_id)
             or bot.settings.get_default_style(guild_id)
         )
@@ -624,6 +626,106 @@ def _get_channel_id(
     if message and message.channel:
         return message.channel.id
     return None
+
+
+def _extract_requested_style(prompt: str, bot: "DiscordAIBot", guild_id: int | None) -> str | None:
+    text = prompt.casefold()
+    available_styles = list(STYLE_NAMES)
+    available_styles.extend(style.name for style in bot.settings.list_custom_styles(guild_id))
+
+    aliases = {
+        "기본": "default",
+        "기본 스타일": "default",
+        "예전 gpt": "classic",
+        "gpt": "classic",
+        "장단": "classic",
+        "장단맞춰": "classic",
+        "장단 맞춰": "classic",
+        "효율": "efficient",
+        "효율적": "efficient",
+        "효율적으로": "efficient",
+        "간결": "efficient",
+        "간결하게": "efficient",
+        "꾸밈없이": "efficient",
+        "꾸밈없게": "efficient",
+        "담백": "efficient",
+        "담백하게": "efficient",
+        "학습": "study",
+        "학습 모드": "study",
+        "가이드 학습": "study",
+        "제미나이": "study",
+        "gemini": "study",
+        "그록": "grok",
+        "grok": "grok",
+        "매운": "spicy",
+        "맵게": "spicy",
+        "스파이시": "spicy",
+        "spicy": "spicy",
+        "19금": "spicy",
+        "진지": "efficient",
+        "진지한": "efficient",
+        "전문적": "efficient",
+        "선생님": "study",
+        "교사": "study",
+        "강사": "study",
+        "teacher": "study",
+        "코더": "efficient",
+        "개발자": "efficient",
+        "코딩": "efficient",
+        "coder": "efficient",
+        "친구": "classic",
+        "한국 친구": "classic",
+        "한국어 친구": "classic",
+    }
+
+    for name in available_styles:
+        lowered = name.casefold()
+        if _has_style_request(text, lowered):
+            return name
+
+    for alias, style in aliases.items():
+        if _has_style_request(text, alias) and (
+            is_valid_style(style) or bot.settings.get_custom_style(guild_id, style) is not None
+        ):
+            return style
+
+    return None
+
+
+def _has_style_request(text: str, style_text: str) -> bool:
+    style_text = style_text.casefold().strip()
+    if not style_text:
+        return False
+
+    compact_text = text.replace(" ", "")
+    compact_style = style_text.replace(" ", "")
+    phrases = (
+        f"{style_text} 스타일",
+        f"{style_text} 모드",
+        f"{style_text} 톤",
+        f"{style_text} 말투",
+        f"{style_text}로",
+        f"{style_text}으로",
+        f"{style_text}처럼",
+        f"{style_text}답게",
+        f"{style_text} 답",
+        f"{style_text} 대답",
+        f"{style_text} 설명",
+    )
+    compact_phrases = (
+        f"{compact_style}스타일",
+        f"{compact_style}모드",
+        f"{compact_style}톤",
+        f"{compact_style}말투",
+        f"{compact_style}로",
+        f"{compact_style}으로",
+        f"{compact_style}처럼",
+        f"{compact_style}답게",
+        f"{compact_style}답",
+        f"{compact_style}대답",
+        f"{compact_style}설명",
+    )
+    return any(phrase in text for phrase in phrases) or any(phrase in compact_text for phrase in compact_phrases)
 
 
 def _should_auto_respond(setting: AutoChannelSettings, content: str) -> bool:

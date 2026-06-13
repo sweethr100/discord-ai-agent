@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 import aiohttp
 import discord
 
-from agent.styles import STYLE_NAMES, STYLE_PRESETS, format_style_presets, is_valid_style
+from agent.styles import STYLE_NAMES, STYLE_PRESETS, format_style_presets, is_valid_style, resolve_style_name
 from discord_bot.settings_store import AUTOCHANNEL_MODES
 from providers.base import Message, ProviderOptions
 
@@ -125,7 +125,7 @@ ACTION_PLANNER_PROMPT = """\
 - 현재 채널을 뜻하면 channel을 "current"로 넣어라.
 - type은 text, voice, stage, category, forum, media 중 하나만 사용하라.
 - mode는 always, question_only, keyword 중 하나만 사용하라.
-- style은 기본 스타일(default, grok, serious, teacher, coder, korean_friend, custom) 또는 서버에 추가된 스타일 이름을 사용하라.
+- style은 기본 스타일(default, classic, efficient, study, grok, spicy) 또는 서버에 추가된 스타일 이름을 사용하라.
 - style_add/style_modify의 name은 영어 소문자, 숫자, _, - 로 된 1~32자 이름이다.
 - slowmode는 초 단위 정수다.
 - position, bitrate, user_limit, default_auto_archive_duration, default_thread_slowmode는 정수다.
@@ -940,6 +940,8 @@ def _style_set(context: ActionContext, args: dict[str, Any]) -> str:
     style = str(args.get("style", "")).strip()
     if not is_valid_style(style):
         style = _normalize_style_name(style)
+    else:
+        style = resolve_style_name(style)
     if not _style_exists(context, style):
         return f"지원하지 않는 스타일이에요. 사용 가능: {', '.join(f'`{name}`' for name in _available_style_names(context))}"
 
@@ -948,26 +950,19 @@ def _style_set(context: ActionContext, args: dict[str, Any]) -> str:
 
 
 def _style_show(context: ActionContext) -> str:
-    style = context.bot.settings.get_default_style(context.guild.id)
-    preset = context.bot.settings.get_custom_style(context.guild.id, style) or STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
-    prompt = (
-        context.bot.settings.get_custom_style_prompt(context.guild.id)
-        if context.bot.settings.get_custom_style(context.guild.id, style) is None
-        and style == "custom"
-        and context.bot.settings.get_custom_style_prompt(context.guild.id)
-        else getattr(preset, "prompt", "")
-    )
-    prompt = prompt or "기본 SYSTEM_PROMPT를 그대로 사용"
-    lines = [
-        f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\n"
-        f"시스템 프롬프트: {prompt}"
-    ]
+    stored_style = context.bot.settings.get_default_style(context.guild.id)
+    custom_style = context.bot.settings.get_custom_style(context.guild.id, stored_style)
+    style = resolve_style_name(stored_style) if custom_style is None and is_valid_style(stored_style) else stored_style
+    preset = custom_style or STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
+    lines = [f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}"]
     channel_styles = context.bot.settings.list_channel_styles(context.guild.id)
     if channel_styles:
         lines.append("채널별 스타일:")
         for channel_id, channel_style in channel_styles:
             channel = context.guild.get_channel(channel_id)
             label = channel.mention if channel else f"<#{channel_id}>"
+            if context.bot.settings.get_custom_style(context.guild.id, channel_style) is None and is_valid_style(channel_style):
+                channel_style = resolve_style_name(channel_style)
             lines.append(f"- {label}: `{channel_style}`")
     return "\n".join(lines)
 
@@ -1041,6 +1036,8 @@ def _style_channel(context: ActionContext, args: dict[str, Any]) -> str:
     style = str(args.get("style") or "").strip()
     if not is_valid_style(style):
         style = _normalize_style_name(style)
+    else:
+        style = resolve_style_name(style)
     if style == "server_default":
         removed = context.bot.settings.remove_channel_style(context.guild.id, channel.id)
         if removed:

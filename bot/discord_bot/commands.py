@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import discord
 from discord import app_commands
 
-from agent.styles import STYLE_NAMES, STYLE_PRESETS, format_style_presets, is_valid_style
+from agent.styles import STYLE_NAMES, STYLE_PRESETS, format_style_presets, is_valid_style, resolve_style_name
 from discord_bot.handlers import handle_ai_request
 from discord_bot.settings_store import AUTOCHANNEL_MODES
 from utils.split_message import split_discord_message
@@ -191,7 +191,8 @@ def register_commands(bot: "DiscordAIBot") -> None:
             await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
             return
 
-        style = _normalize_style_name(style) if not is_valid_style(style.strip()) else style.strip()
+        style = style.strip()
+        style = resolve_style_name(style) if is_valid_style(style) else _normalize_style_name(style)
         if not _style_exists(bot, guild_id, style):
             await _send_ephemeral(interaction, "지원하지 않는 스타일이에요.")
             return
@@ -210,26 +211,22 @@ def register_commands(bot: "DiscordAIBot") -> None:
             await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
             return
 
-        style = bot.settings.get_default_style(guild_id)
-        custom_style = bot.settings.get_custom_style(guild_id, style)
+        stored_style = bot.settings.get_default_style(guild_id)
+        custom_style = bot.settings.get_custom_style(guild_id, stored_style)
+        style = resolve_style_name(stored_style) if custom_style is None and is_valid_style(stored_style) else stored_style
         preset = custom_style or STYLE_PRESETS.get(style, STYLE_PRESETS["default"])
-        prompt = (
-            bot.settings.get_custom_style_prompt(guild_id)
-            if custom_style is None and style == "custom" and bot.settings.get_custom_style_prompt(guild_id)
-            else getattr(preset, "prompt", "")
-        )
-        prompt = prompt or "기본 SYSTEM_PROMPT를 그대로 사용"
         channel_styles = bot.settings.list_channel_styles(guild_id)
         channel_lines = []
         if interaction.guild:
             for channel_id, channel_style in channel_styles:
                 channel = interaction.guild.get_channel(channel_id)
                 channel_label = channel.mention if channel else f"<#{channel_id}>"
+                if bot.settings.get_custom_style(guild_id, channel_style) is None and is_valid_style(channel_style):
+                    channel_style = resolve_style_name(channel_style)
                 channel_lines.append(f"- {channel_label}: `{channel_style}`")
         channel_text = "\n채널별 스타일:\n" + "\n".join(channel_lines) if channel_lines else ""
         await interaction.response.send_message(
             f"현재 서버 기본 AI 스타일: `{preset.name}` - {preset.description}\n"
-            f"시스템 프롬프트: {prompt}"
             f"{channel_text}",
             allowed_mentions=discord.AllowedMentions.none(),
         )
@@ -387,7 +384,8 @@ def register_commands(bot: "DiscordAIBot") -> None:
             await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
             return
 
-        style = _normalize_style_name(style) if not is_valid_style(style.strip()) else style.strip()
+        style = style.strip()
+        style = resolve_style_name(style) if is_valid_style(style) else _normalize_style_name(style)
         if style == "server_default":
             removed = bot.settings.remove_channel_style(guild_id, channel.id)
             message = (

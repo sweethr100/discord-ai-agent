@@ -24,8 +24,9 @@ SELF_USAGE_MANUAL = """\
 - 모든 사용자가 사용할 수 있다.
 - `message`는 필수다.
 - `style`은 선택값이며 이 요청에만 임시 적용된다. 서버 기본 스타일은 바뀌지 않는다.
-- 사용 가능한 style 값: 기본 스타일 `default`, `grok`, `serious`, `teacher`, `coder`, `korean_friend`, `custom` 및 해당 서버에 `/style add`로 추가한 스타일.
-- 예시: `/ai message:오늘 회의 안건 정리해줘 style:teacher`
+- 봇 멘션이나 자동 응답에서도 `efficient 스타일로 답해줘`, `study 스타일로 설명해줘`처럼 말하면 이번 답변에만 해당 스타일을 임시 적용한다.
+- 사용 가능한 style 값: 기본 스타일 `default`, `classic`, `efficient`, `study`, `grok`, `spicy` 및 해당 서버에 `/style add`로 추가한 스타일.
+- 예시: `/ai message:오늘 회의 안건 정리해줘 style:study`
 
 명령어: 자동 응답 채널 관리
 - `/autochannel add channel:<채널> mode:<always|question_only|keyword> keywords:<선택>`
@@ -59,7 +60,7 @@ SELF_USAGE_MANUAL = """\
 - 메시지 내용을 읽으려면 Discord Developer Portal에서 Message Content Intent가 켜져 있어야 한다.
 
 명령어: AI 스타일 관리
-- `/style set style:<default|grok|serious|teacher|coder|korean_friend|custom|서버_커스텀_스타일>`
+- `/style set style:<default|classic|efficient|study|grok|spicy|서버_커스텀_스타일>`
   - 서버 기본 AI 스타일을 설정한다.
   - 관리자 또는 Manage Guild 권한이 필요하다.
 - `/style show`
@@ -86,19 +87,18 @@ SELF_USAGE_MANUAL = """\
 
 스타일 설명
 - `default`: 기본 친절한 Discord AI 에이전트.
-- `grok`: 재치 있고 직설적이지만 무례하지 않은 답변.
-- `serious`: 차분하고 전문적인 답변.
-- `teacher`: 개념을 단계별로 설명하는 선생님 스타일.
-- `coder`: 개발자에게 유용한 코드 중심 답변.
-- `korean_friend`: 한국어로 편하게 말해주는 친구 스타일.
-- `custom`: 서버 관리자가 설정한 커스텀 시스템 프롬프트.
+- `classic`: 사용자의 말에 장단을 맞춰주는 부드러운 답변.
+- `efficient`: 더 효율적이고 간결하며 꾸밈없는 답변.
+- `study`: 이해와 학습을 돕는 답변.
+- `grok`: 그록같이 재치 있고 직설적인 답변.
+- `spicy`: 엄청 맵고 거침없는 답변.
 - `/style add`로 추가한 스타일: 해당 서버에서만 사용할 수 있으며, `/ai style:<이름>` 또는 `/style set style:<이름>`으로 사용할 수 있다.
 
 자연어 에이전트 도구: 봇 자체 설정
 - 사용자는 `/ai` 또는 봇 멘션으로 자연어 요청을 보낼 수 있다.
 - 예: `@봇 #ai-chat 채널을 자동 응답 채널로 등록해줘. 모드는 always`
 - 예: `/ai message:#help 자동응답 채널을 keyword 모드로 추가하고 키워드는 질문,도와줘로 해줘`
-- 예: `@봇 서버 기본 AI 스타일을 coder로 바꿔줘`
+- 예: `@봇 서버 기본 AI 스타일을 efficient로 바꿔줘`
 - 예: `@봇 news 스타일을 #news 채널에만 적용해줘`
 - 실행 가능한 자체 설정 작업: 자동 응답 채널 추가/제거/목록, AI 스타일 set/show/presets/add/modify/remove/channel.
 - 권한은 기존 slash command와 같다. 자동 응답 채널 관리는 Manage Channels, 스타일 set/add/modify/remove/channel은 Manage Guild가 필요하다.

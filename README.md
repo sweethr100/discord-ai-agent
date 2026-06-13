@@ -121,11 +121,12 @@ python bot/main.py
 - 모든 사용자가 사용할 수 있습니다.
 - `style`은 선택값입니다.
 - `style`을 넣으면 해당 요청에만 임시 적용되고, 서버 기본 스타일은 바뀌지 않습니다.
+- 봇 멘션이나 자동 응답에서도 `efficient 스타일로 답해줘`, `study 스타일로 설명해줘`처럼 말하면 이번 답변에만 해당 스타일을 임시 적용합니다.
 
 예시:
 
 ```text
-/ai message:오늘 회의 안건 정리해줘 style:teacher
+/ai message:오늘 회의 안건 정리해줘 style:study
 ```
 
 ### 자동 응답 채널 관리
@@ -178,7 +179,7 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 ### AI 스타일 관리
 
 ```text
-/style set style:<default|grok|serious|teacher|coder|korean_friend|custom|서버_커스텀_스타일>
+/style set style:<default|classic|efficient|study|grok|spicy|서버_커스텀_스타일>
 /style show
 /style presets
 /style add name:<이름> description:<간단한 설명> prompt:<시스템 프롬프트>
@@ -195,12 +196,11 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 스타일:
 
 - `default`: 기본 친절한 Discord AI 에이전트
-- `grok`: 재치 있고 직설적이지만 무례하지 않은 답변
-- `serious`: 차분하고 전문적인 답변
-- `teacher`: 개념을 단계별로 설명하는 선생님 스타일
-- `coder`: 개발자에게 유용한 코드 중심 답변
-- `korean_friend`: 한국어로 편하게 말해주는 친구 스타일
-- `custom`: 서버 관리자가 설정한 커스텀 시스템 프롬프트
+- `classic`: 사용자의 말에 장단을 맞춰주는 부드러운 답변
+- `efficient`: 더 효율적이고 간결하며 꾸밈없는 답변
+- `study`: 이해와 학습을 돕는 답변
+- `grok`: 그록같이 재치 있고 직설적인 답변
+- `spicy`: 엄청 맵고 거침없는 답변
 - `/style add`로 추가한 스타일: 해당 서버에서만 사용할 수 있는 커스텀 스타일
 
 `/style presets`는 각 스타일의 설명과 시스템 프롬프트를 함께 보여줍니다.
@@ -229,9 +229,9 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 
 ```text
 @봇 #ai-chat 채널을 자동 응답 채널로 등록해줘. 모드는 always
-/ai message:#help 자동응답을 keyword 모드로 바꾸고 키워드는 질문,도와줘로 해줘
-@봇 서버 기본 AI 스타일을 coder로 바꿔줘
-@봇 custom 스타일 프롬프트를 "한국어로 짧게 답해"로 저장해줘
+/ai message:#help 자동응답 채널을 keyword 모드로 추가하고 키워드는 질문,도와줘로 해줘
+@봇 서버 기본 AI 스타일을 efficient로 바꿔줘
+@봇 news 스타일을 #news 채널에만 적용해줘
 ```
 
 서버 관리 예시:
@@ -257,8 +257,8 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 
 실행 가능한 작업:
 
-- 자동 응답 채널 추가/제거/목록/모드 변경
-- AI 스타일 set/show/presets/custom
+- 자동 응답 채널 추가/제거/목록
+- AI 스타일 set/show/presets/add/modify/remove/channel
 - 채널 생성/수정/삭제: 텍스트, 음성, 스테이지, 카테고리, 포럼, 미디어 채널
 - 채널 위치, 슬로우모드, 포럼 기본 레이아웃/정렬/태그 요구, 음성 RTC 지역/영상 품질 같은 세부 설정 변경
 - 채널 복제, 공지 채널 팔로우, 채널 고정 메시지 조회
@@ -282,7 +282,7 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 권한:
 
 - 자동 응답 채널 관리와 채널 작업: 관리자 또는 **Manage Channels** 권한이 필요합니다. 봇에게도 **Manage Channels** 권한이 있어야 합니다.
-- AI 스타일 set/custom: 관리자 또는 **Manage Guild** 권한이 필요합니다.
+- AI 스타일 set/add/modify/remove/channel: 관리자 또는 **Manage Guild** 권한이 필요합니다.
 - 역할 생성/수정/삭제/추가/제거: 관리자 또는 **Manage Roles** 권한이 필요합니다. 봇에게도 **Manage Roles** 권한이 있어야 합니다.
 - 이모지/스티커/사운드: **Create Expressions** 또는 **Manage Expressions** 권한이 필요합니다. 첨부파일 또는 URL이 필요합니다.
 - 웹훅/공지 채널 팔로우: **Manage Webhooks**, 감사 로그: **View Audit Log**, 서버 설정/환영 화면/위젯/온보딩/통합/커스텀 초대: **Manage Server**, 초대: **Create Invite** 권한이 필요합니다.
