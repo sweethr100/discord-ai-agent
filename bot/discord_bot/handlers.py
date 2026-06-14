@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import discord
@@ -71,6 +72,19 @@ QUESTION_HINTS = (
 CONFIRMATION_TIMEOUT_SECONDS = 60.0
 FEEDBACK_GENERATION_ATTEMPTS = 2
 ACTION_VALIDATION_REPLAN_ATTEMPTS = 2
+AUTOCHANNEL_DEBOUNCE_SECONDS = 3.0
+
+
+@dataclass
+class PendingAutoChannelRequest:
+    bot: "DiscordAIBot"
+    mode: str
+    message: discord.Message
+    contents: list[str] = field(default_factory=list)
+    task: asyncio.Task[None] | None = None
+
+
+_pending_autochannel_requests: dict[tuple[int, int, int], PendingAutoChannelRequest] = {}
 
 
 async def handle_ai_request(
@@ -324,6 +338,7 @@ async def _request_action_confirmation(
     prompt: str,
     system_prompt: str,
     channel_context: str,
+    prefix_content: str = "",
 ) -> None:
     requester = interaction.user if interaction else message.author if message else None
     view = AgentActionConfirmView(
@@ -335,8 +350,11 @@ async def _request_action_confirmation(
         prompt=prompt,
         system_prompt=system_prompt,
         channel_context=channel_context,
+        prefix_content=prefix_content,
     )
     content = describe_action_plan(plan)
+    if prefix_content.strip():
+        content = _append_message_content(prefix_content, f"새 작업 제안: {content}")
     await _edit_ai_message(
         thinking_message,
         content=content,
@@ -399,6 +417,7 @@ async def _generate_rejection_feedback(
     action_plan: ActionPlan,
     system_prompt: str,
     channel_context: str,
+    rejection_note: str = "",
 ) -> str:
     messages: list[Message] = [
         {
@@ -408,6 +427,7 @@ async def _generate_rejection_feedback(
                 "서버 관리 도구 호출 확인에서 사용자가 거절을 눌렀다. "
                 "해당 작업은 실행되지 않았음을 짧게 인정하고, 사용자의 원래 의도에 맞춰 "
                 "대안, 수정 요청 방법, 또는 다음에 할 수 있는 일을 간결하게 답하라. "
+                "사용자가 거절하면서 추가 메시지를 남겼다면 그 내용을 우선 반영하라. "
                 "새 도구 호출 JSON을 만들지 말고, 확인 버튼을 텍스트로 흉내 내지 마라."
             ),
         },
@@ -422,14 +442,19 @@ async def _generate_rejection_feedback(
                 ),
             }
         )
+    user_content = (
+        f"사용자 원래 요청: {prompt}\n"
+        f"거절된 작업: {describe_action_plan(action_plan)}\n"
+        "상태: 사용자가 거절 버튼을 눌러 작업을 실행하지 않았다."
+    )
+    rejection_note = rejection_note.strip()
+    if rejection_note:
+        user_content += f"\n사용자가 거절하면서 추가로 남긴 메시지: {rejection_note}"
+
     messages.append(
         {
             "role": "user",
-            "content": (
-                f"사용자 원래 요청: {prompt}\n"
-                f"거절된 작업: {describe_action_plan(action_plan)}\n"
-                "상태: 사용자가 거절 버튼을 눌러 작업을 실행하지 않았다."
-            ),
+            "content": user_content,
         }
     )
     return await _generate_feedback_response(
@@ -569,6 +594,7 @@ class AgentActionConfirmView(discord.ui.View):
         prompt: str,
         system_prompt: str,
         channel_context: str,
+        prefix_content: str = "",
     ) -> None:
         super().__init__(timeout=CONFIRMATION_TIMEOUT_SECONDS)
         self.bot = bot
@@ -579,6 +605,7 @@ class AgentActionConfirmView(discord.ui.View):
         self.prompt = prompt
         self.system_prompt = system_prompt
         self.channel_context = channel_context
+        self.prefix_content = prefix_content.strip()
         self.completed = False
         self._completion_lock = asyncio.Lock()
 
@@ -605,7 +632,7 @@ class AgentActionConfirmView(discord.ui.View):
                 return
             self.completed = True
             self._disable_buttons()
-            accepted_content = f"{describe_action_plan(self.plan)} 수락됨."
+            accepted_content = self._status_content(f"{describe_action_plan(self.plan)} 수락됨.")
             await interaction.response.edit_message(
                 content=accepted_content,
                 view=self,
@@ -651,18 +678,41 @@ class AgentActionConfirmView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
+        if self.completed:
+            await interaction.response.send_message("이미 처리된 작업이에요.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(AgentActionRejectModal(self))
+
+    async def handle_reject_submission(
+        self,
+        interaction: discord.Interaction,
+        *,
+        rejection_note: str,
+    ) -> None:
         async with self._completion_lock:
             if self.completed:
                 await interaction.response.send_message("이미 처리된 작업이에요.", ephemeral=True)
                 return
             self.completed = True
             self._disable_buttons()
-            rejected_content = f"{describe_action_plan(self.plan)} 거절됨."
-            await interaction.response.edit_message(
-                content=rejected_content,
+            rejected_content = self._status_content(f"{describe_action_plan(self.plan)} 거절됨.")
+            await interaction.response.defer()
+            await _edit_ai_message(
+                self.response_message,
+                content=_append_message_content(rejected_content, "생각 중..."),
                 view=self,
-                allowed_mentions=discord.AllowedMentions.none(),
             )
+
+        if rejection_note.strip():
+            handled = await self._try_replan_after_rejection(
+                rejected_content=rejected_content,
+                rejection_note=rejection_note.strip(),
+            )
+            if handled:
+                self.stop()
+                return
+
         try:
             response = await _generate_rejection_feedback(
                 bot=self.bot,
@@ -670,6 +720,7 @@ class AgentActionConfirmView(discord.ui.View):
                 action_plan=self.plan,
                 system_prompt=self.system_prompt,
                 channel_context=self.channel_context,
+                rejection_note=rejection_note,
             )
         except Exception:
             logger.exception("Failed to generate rejection feedback: %s", self.plan.action)
@@ -685,21 +736,180 @@ class AgentActionConfirmView(discord.ui.View):
         await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
         self.stop()
 
+    async def _try_replan_after_rejection(
+        self,
+        *,
+        rejected_content: str,
+        rejection_note: str,
+    ) -> bool:
+        replan_prompt = (
+            f"사용자 원래 요청: {self.prompt}\n"
+            f"거절된 작업: {describe_action_plan(self.plan)}\n"
+            f"사용자가 거절하면서 추가로 남긴 메시지: {rejection_note}\n\n"
+            "추가 메시지를 반영해서 원래 요청을 다시 처리해줘. "
+            "새 서버 관리 작업이 필요하면 도구 호출 JSON을 출력하고, 실행할 작업이 아니면 자연어로 답해줘."
+        )
+        member_reference_context = await build_member_reference_context(
+            guild=self.context.guild,
+            requester=self.context.user,
+            prompt=replan_prompt,
+            message=self.context.message,
+        )
+        channel_reference_context = build_channel_reference_context(
+            guild=self.context.guild,
+            current_channel=self.context.channel,
+            prompt=replan_prompt,
+            message=self.context.message,
+        )
+        voice_reference_context = build_voice_reference_context(guild=self.context.guild)
+
+        try:
+            agent_turn = await run_agent_turn(
+                self.bot,
+                replan_prompt,
+                system_prompt=self.system_prompt,
+                channel_context=self.channel_context,
+                member_reference_context=member_reference_context,
+                channel_reference_context=channel_reference_context,
+                voice_reference_context=voice_reference_context,
+            )
+        except ProviderResponseError:
+            logger.warning("Provider returned invalid replan after rejected AI action: %s", self.plan.action)
+            return False
+
+        action_plan = agent_turn.action_plan
+        if action_plan is None:
+            chunks = split_discord_message(normalize_discord_markdown(agent_turn.content))
+            await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
+            return True
+
+        validation_error = ""
+        for attempt in range(ACTION_VALIDATION_REPLAN_ATTEMPTS + 1):
+            validation_error = await validate_action_plan(self.context, action_plan) or ""
+            if not validation_error:
+                break
+            if attempt >= ACTION_VALIDATION_REPLAN_ATTEMPTS:
+                break
+            try:
+                repaired_turn = await retry_agent_turn_after_validation(
+                    self.bot,
+                    replan_prompt,
+                    failed_plan=action_plan,
+                    validation_error=validation_error,
+                    system_prompt=self.system_prompt,
+                    channel_context=self.channel_context,
+                    member_reference_context=member_reference_context,
+                    channel_reference_context=channel_reference_context,
+                    voice_reference_context=voice_reference_context,
+                )
+            except ProviderResponseError:
+                logger.warning("Provider returned invalid rejection replan repair: %s", action_plan.action)
+                break
+            if repaired_turn.action_plan is None:
+                chunks = split_discord_message(normalize_discord_markdown(repaired_turn.content))
+                await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
+                return True
+            action_plan = repaired_turn.action_plan
+
+        if validation_error:
+            try:
+                validation_response = await _generate_validation_feedback(
+                    bot=self.bot,
+                    prompt=replan_prompt,
+                    action_plan=action_plan,
+                    validation_error=validation_error,
+                    system_prompt=self.system_prompt,
+                    channel_context=self.channel_context,
+                )
+            except ProviderResponseError:
+                validation_response = validation_error
+            chunks = split_discord_message(normalize_discord_markdown(validation_response))
+            await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
+            return True
+
+        action_plan = await resolve_action_plan_mentions(self.context, action_plan)
+        if action_requires_confirmation(action_plan):
+            view = AgentActionConfirmView(
+                bot=self.bot,
+                plan=action_plan,
+                context=self.context,
+                response_message=self.response_message,
+                requester_id=self.requester_id,
+                prompt=replan_prompt,
+                system_prompt=self.system_prompt,
+                channel_context=self.channel_context,
+                prefix_content=rejected_content,
+            )
+            await _edit_ai_message(
+                self.response_message,
+                content=_append_message_content(rejected_content, f"새 작업 제안: {describe_action_plan(action_plan)}"),
+                view=view,
+            )
+            return True
+
+        execution_result = await execute_agent_action(self.context, action_plan)
+        response = await _generate_execution_feedback_or_fallback(
+            bot=self.bot,
+            prompt=replan_prompt,
+            action_plan=action_plan,
+            execution_result=execution_result,
+            system_prompt=self.system_prompt,
+            channel_context=self.channel_context,
+            confirmed=False,
+        )
+        chunks = split_discord_message(normalize_discord_markdown(response))
+        await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
+        return True
+
     async def on_timeout(self) -> None:
         if self.completed:
             return
 
         self._disable_buttons()
+        timeout_content = self._status_content(f"시간 초과로 취소했습니다. {describe_action_plan(self.plan)}")
         await _edit_ai_message(
             self.response_message,
-            content=f"시간 초과로 취소했습니다. {describe_action_plan(self.plan)}",
+            content=timeout_content,
             view=self,
         )
+
+    def _status_content(self, status: str) -> str:
+        if not self.prefix_content:
+            return status
+        return _append_message_content(self.prefix_content, status)
 
     def _disable_buttons(self) -> None:
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.disabled = True
+
+
+class AgentActionRejectModal(discord.ui.Modal):
+    def __init__(self, confirm_view: AgentActionConfirmView) -> None:
+        super().__init__(title="관리 작업 거절")
+        self.confirm_view = confirm_view
+        self.note = discord.ui.TextInput(
+            label="LLM에게 같이 보낼 추가 메시지",
+            placeholder="예: 대상이 틀렸어. 다른 채널로 다시 물어봐줘.",
+            required=False,
+            max_length=500,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.note)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.confirm_view.requester_id:
+            await interaction.response.send_message(
+                "이 작업은 요청한 사용자만 거절할 수 있어요.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
+        await self.confirm_view.handle_reject_submission(
+            interaction,
+            rejection_note=str(self.note.value or "").strip(),
+        )
 
 
 async def handle_message(bot: "DiscordAIBot", message: discord.Message) -> None:
@@ -726,6 +936,10 @@ async def handle_message(bot: "DiscordAIBot", message: discord.Message) -> None:
     if autochannel is None:
         return
 
+    if autochannel.mode in {"always", "question_only"}:
+        _queue_autochannel_request(bot, message, autochannel.mode)
+        return
+
     if not _should_auto_respond(autochannel, message.content):
         return
 
@@ -733,6 +947,67 @@ async def handle_message(bot: "DiscordAIBot", message: discord.Message) -> None:
         bot=bot,
         prompt=message.content,
         message=message,
+        source="autochannel",
+    )
+
+
+def _queue_autochannel_request(
+    bot: "DiscordAIBot",
+    message: discord.Message,
+    mode: str,
+) -> None:
+    if message.guild is None:
+        return
+
+    content = message.content.strip()
+    if not content:
+        return
+
+    key = (message.guild.id, message.channel.id, message.author.id)
+    pending = _pending_autochannel_requests.get(key)
+    if pending is None:
+        pending = PendingAutoChannelRequest(bot=bot, mode=mode, message=message)
+        _pending_autochannel_requests[key] = pending
+
+    pending.bot = bot
+    pending.mode = mode
+    pending.message = message
+    pending.contents.append(content)
+
+    if pending.task is not None:
+        pending.task.cancel()
+    pending.task = asyncio.create_task(_flush_autochannel_request_after_delay(key))
+
+
+async def _flush_autochannel_request_after_delay(key: tuple[int, int, int]) -> None:
+    pending = _pending_autochannel_requests.get(key)
+    if pending is None:
+        return
+
+    channel = pending.message.channel
+    try:
+        async with channel.typing():
+            await asyncio.sleep(AUTOCHANNEL_DEBOUNCE_SECONDS)
+    except asyncio.CancelledError:
+        raise
+    except (discord.Forbidden, discord.HTTPException):
+        await asyncio.sleep(AUTOCHANNEL_DEBOUNCE_SECONDS)
+
+    pending = _pending_autochannel_requests.pop(key, None)
+    if pending is None:
+        return
+
+    prompt = "\n".join(pending.contents).strip()
+    if not prompt:
+        return
+
+    if pending.mode == "question_only" and not _looks_like_question(prompt):
+        return
+
+    await handle_ai_request(
+        bot=pending.bot,
+        prompt=prompt,
+        message=pending.message,
         source="autochannel",
     )
 

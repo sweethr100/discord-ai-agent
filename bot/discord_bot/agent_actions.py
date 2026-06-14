@@ -22,24 +22,27 @@ if TYPE_CHECKING:
 ACTION_PLANNER_PROMPT = """\
 너는 Discord AI Agent Bot의 서버 관리 도구 호출 컨트롤러다.
 사용자 메시지가 봇 자체 설정 또는 Discord 서버 관리 실행 요청이면 실행할 도구 호출을 JSON으로 요청하라.
-일반 질문, 설명 요청, 잡담, 코딩 질문이면 {"action":"none","args":{},"confidence":0}를 출력하라.
+일반 질문, 설명 요청, 잡담, 코딩 질문이면 {"action":"none","args":{}}를 출력하라.
 반드시 JSON 객체 하나만 출력하라. 설명 문장, Markdown, 코드블록은 출력하지 마라.
 
 출력 형식:
-{"action":"도구_이름","args":{"필요한_인자":"값"},"confidence":0.0}
+{"action":"도구_이름","args":{"필요한_인자":"값"}}
 
 여러 작업 출력 형식:
-{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}],"confidence":0.0}
+{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}]}
 
 예시:
 사용자: 찐코 통방에서 연결 끊어달라고
-출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"},"confidence":0.95}
+출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"}}
 
 사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
-출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}],"confidence":0.95}
+출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}]}
 
 사용자: 음성1에 들어간 모든 유저의 마이크 음소거 해줘
-출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}],"confidence":0.95}
+출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}]}
+
+사용자: 리건 타임아웃 풀어줘
+출력: {"action":"member_timeout","args":{"member":"123456789012345678","duration_minutes":0}}
 
 지원 도구 action:
 - autochannel_add: args channel, mode, keywords
@@ -142,13 +145,14 @@ ACTION_PLANNER_PROMPT = """\
 - 현재 요청이 "120분 해줘", "해제해줘", "그렇게 해줘"처럼 이전 서버 관리 요청의 누락 정보를 보충하는 말이면, 최근 문맥의 해당 요청과 합쳐 하나의 도구 action을 선택하라.
 - 과거 메시지만으로 새 작업을 실행하지 마라. 반드시 현재 요청에 실행 의도가 있어야 한다.
 - member_timeout에 대상은 있지만 duration_minutes가 없고 해제 요청도 아니면 member_timeout_duration_needed를 선택하라.
+- "타임아웃 해제", "타임아웃 제거", "타임아웃 풀어", "타임아웃 취소", "타임아웃 없애"는 member_timeout의 duration_minutes를 0으로 넣어라.
 - channel/member/role/thread/forum/emoji/sticker/sound/event/webhook/integration은 Discord mention 또는 ID가 있으면 그대로 넣어라. 예: <#123>, <@456>, <@&789>.
 - 아래 입력에 "현재 요청자" 또는 "멤버 목록"이 제공되고 대상 멤버가 그 안에 있으면 member 값은 반드시 해당 id 문자열을 사용하라.
 - 사용자가 "나", "내", "저", "본인", "me"를 대상 멤버로 말하면 현재 요청자의 id를 member 값으로 넣어라.
 - 멤버 목록에 없는 멤버 ID를 추측하거나 만들어내지 마라. 목록에서 찾지 못한 경우에만 사용자가 말한 별명, 표시 이름, 유저명을 문자열 그대로 넣어라.
 - 아래 입력에 "음성 채널 접속자 목록"이 제공되고 사용자가 특정 음성/스테이지 채널의 모든 유저에게 작업을 요청하면, 해당 채널의 listed members 각각을 대상으로 actions 배열을 출력하라.
 - 음성 채널의 모든 유저에게 member_mute_voice/member_deafen_voice/member_disconnect_voice/member_move_voice 같은 멤버별 음성 작업을 적용할 수 있다. "단일 기능만 구현되어 있다"고 말하지 마라.
-- 음성 채널 접속자 목록에 대상 채널은 있지만 접속자가 없으면 {"action":"none","args":{"content":"해당 음성 채널에 접속 중인 멤버가 없다고 짧게 알리는 문장"},"confidence":1}를 출력하라.
+- 음성 채널 접속자 목록에 대상 채널은 있지만 접속자가 없으면 {"action":"none","args":{"content":"해당 음성 채널에 접속 중인 멤버가 없다고 짧게 알리는 문장"}}를 출력하라.
 - "별명 되돌려", "별명 초기화", "별명 없애"는 member_nickname의 nickname을 null로 넣어라.
 - 아래 입력에 "현재 채널" 또는 "채널 목록"이 제공되고 대상 채널이 그 안에 있으면 channel/source_channel/destination_channel/category/forum/thread 값은 반드시 해당 mention 문자열(<#id>)을 사용하라.
 - channels/default_channels처럼 채널 배열을 받는 인자도 목록에 있는 채널은 mention 문자열(<#id>) 배열로 넣어라.
@@ -173,7 +177,6 @@ ACTION_PLANNER_PROMPT = """\
 - keywords는 배열이다.
 - welcome_screen_update의 channels와 onboarding_update의 default_channels는 채널 mention/ID/name 배열이다.
 - bulk_ban의 users는 사용자 mention/ID 배열이다.
-- confidence는 0부터 1 사이 숫자다.
 """
 
 AGENT_TOOL_PROMPT = """\
@@ -187,26 +190,29 @@ AGENT_TOOL_PROMPT = """\
 - "가능해?", "할 수 있어?", "명령어 알려줘", "설정법 알려줘"처럼 실행이 아니라 설명을 묻는 요청이면 자연어로 답하라.
 
 도구 호출 형식:
-{"action":"도구_이름","args":{"필요한_인자":"값"},"confidence":0.0}
+{"action":"도구_이름","args":{"필요한_인자":"값"}}
 
 여러 작업 도구 호출 형식:
-{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}],"confidence":0.0}
+{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}]}
 
 도구 호출 예시:
 사용자: 찐코 통방에서 연결 끊어달라고
-출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"},"confidence":0.95}
+출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"}}
 
 사용자: 리건한테 관리자 역할 줘
-출력: {"action":"role_add","args":{"member":"123456789012345678","role":"관리자"},"confidence":0.9}
+출력: {"action":"role_add","args":{"member":"123456789012345678","role":"관리자"}}
 
 사용자: 내 별명 되돌려놔
-출력: {"action":"member_nickname","args":{"member":"123456789012345678","nickname":null},"confidence":0.95}
+출력: {"action":"member_nickname","args":{"member":"123456789012345678","nickname":null}}
 
 사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
-출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}],"confidence":0.95}
+출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}]}
 
 사용자: 음성1에 들어간 모든 유저의 마이크 음소거 해줘
-출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}],"confidence":0.95}
+출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}]}
+
+사용자: 리건 타임아웃 풀어줘
+출력: {"action":"member_timeout","args":{"member":"123456789012345678","duration_minutes":0}}
 
 사용자: 음성방에서 사람 내보낼 수 있어?
 출력: 음성 채널 멤버 연결 끊기 같은 서버 관리 작업을 도울 수 있어요. 실행하려면 대상 멤버를 말해 주세요.
@@ -355,7 +361,6 @@ CHANNEL_REFERENCE_LIST_FIELDS = {
 class ActionPlan:
     action: str
     args: dict[str, Any]
-    confidence: float
 
 
 @dataclass(frozen=True)
@@ -414,7 +419,7 @@ async def plan_agent_action(
         channel_reference_context=channel_reference_context,
         voice_reference_context=voice_reference_context,
     )
-    if plan is None or plan.action == "none" or plan.confidence < 0.65:
+    if plan is None or plan.action == "none":
         return None
     return plan
 
@@ -501,22 +506,6 @@ async def _resolve_agent_turn_from_raw(
         turn = _agent_turn_from_plan(parse_result.plan)
         if turn is not None:
             return turn
-        if (
-            parse_result.plan is not None
-            and parse_result.plan.action != "none"
-            and parse_result.plan.confidence < 0.65
-        ):
-            content = await _generate_action_issue_feedback(
-                bot,
-                prompt,
-                issue=f"도구 호출 신뢰도가 낮다: {parse_result.plan.confidence}",
-                system_prompt=system_prompt,
-                channel_context=channel_context,
-                member_reference_context=member_reference_context,
-                channel_reference_context=channel_reference_context,
-                voice_reference_context=voice_reference_context,
-            )
-            return AgentTurn(content=content)
         if not parse_result.error or not parse_result.attempted_tool_call:
             return AgentTurn(content=raw.strip())
         if _attempt >= ACTION_JSON_REPAIR_ATTEMPTS:
@@ -550,9 +539,7 @@ def _agent_turn_from_plan(plan: ActionPlan | None) -> AgentTurn | None:
     if plan is None:
         return None
     if plan.action != "none":
-        if plan.confidence >= 0.65:
-            return AgentTurn(content="", action_plan=plan)
-        return None
+        return AgentTurn(content="", action_plan=plan)
 
     content = str(plan.args.get("content") or "").strip()
     if content:
@@ -828,7 +815,6 @@ async def resolve_action_plan_mentions(context: "ActionContext", plan: ActionPla
         return ActionPlan(
             action=plan.action,
             args={**plan.args, "actions": resolved_actions},
-            confidence=plan.confidence,
         )
 
     resolved_args = dict(plan.args)
@@ -853,7 +839,7 @@ async def resolve_action_plan_mentions(context: "ActionContext", plan: ActionPla
     if resolved_args == plan.args:
         return plan
 
-    return ActionPlan(action=plan.action, args=resolved_args, confidence=plan.confidence)
+    return ActionPlan(action=plan.action, args=resolved_args)
 
 
 def action_requires_confirmation(plan: ActionPlan) -> bool:
@@ -1151,8 +1137,8 @@ async def _retry_agent_action_json(
                 "이전 응답이 서버 관리 도구 호출 JSON 검증에 실패했다. "
                 "검증 실패 이유와 이전 응답을 보고 JSON 객체 하나만 다시 출력하라. "
                 "설명 문장, Markdown, 코드블록은 절대 쓰지 마라. "
-                "현재 요청이 서버 관리 실행 요청이면 올바른 action, args, confidence를 출력하라. "
-                '실행 요청이 아니면 {"action":"none","args":{},"confidence":0}를 출력하라.'
+                "현재 요청이 서버 관리 실행 요청이면 올바른 action과 args를 출력하라. "
+                '실행 요청이 아니면 {"action":"none","args":{}}를 출력하라.'
             ),
         },
     ]
@@ -1238,7 +1224,7 @@ async def _retry_agent_action_after_validation(
                 "설명 문장, Markdown, 코드블록은 절대 쓰지 마라. "
                 "최근 문맥으로 대상이나 채널을 보정할 수 있으면 수정된 action과 args를 출력하라. "
                 "정보가 부족해서 더 이상 도구 호출을 고칠 수 없으면 "
-                '{"action":"none","args":{"content":"사용자에게 필요한 정보를 짧게 다시 요청하는 문장"},"confidence":1} '
+                '{"action":"none","args":{"content":"사용자에게 필요한 정보를 짧게 다시 요청하는 문장"}} '
                 "형식으로 출력하라."
             ),
         },
@@ -1355,7 +1341,6 @@ def _action_plan_to_json(plan: ActionPlan) -> str:
         return json.dumps(
             {
                 "actions": plan.args.get("actions", []),
-                "confidence": plan.confidence,
             },
             ensure_ascii=False,
         )
@@ -1367,7 +1352,6 @@ def _action_plan_to_dict(plan: ActionPlan) -> dict[str, Any]:
     return {
         "action": plan.action,
         "args": plan.args,
-        "confidence": plan.confidence,
     }
 
 
@@ -1383,7 +1367,7 @@ def _batch_action_plans(plan: ActionPlan) -> list[ActionPlan]:
     for item in raw_actions[:MAX_BATCH_ACTIONS]:
         if not isinstance(item, dict):
             continue
-        child_plan, error = _parse_action_plan_data(item, default_confidence=1.0)
+        child_plan, error = _parse_action_plan_data(item)
         if error or child_plan is None or child_plan.action == "none":
             continue
         actions.append(child_plan)
@@ -1430,7 +1414,7 @@ def _parse_action_plan_result(raw: str) -> ActionPlanParseResult:
                     error=f"actions[{index}] 항목은 객체여야 한다.",
                     attempted_tool_call=True,
                 )
-            child_plan, child_error = _parse_action_plan_data(item, default_confidence=1.0)
+            child_plan, child_error = _parse_action_plan_data(item)
             if child_error:
                 return ActionPlanParseResult(
                     error=f"actions[{index}] {child_error}",
@@ -1443,29 +1427,16 @@ def _parse_action_plan_result(raw: str) -> ActionPlanParseResult:
                 )
             child_plans.append(child_plan)
 
-        raw_confidence = data.get("confidence")
-        if raw_confidence is None:
-            confidence = min((child.confidence for child in child_plans), default=1.0)
-        else:
-            try:
-                confidence = float(raw_confidence)
-            except (TypeError, ValueError):
-                return ActionPlanParseResult(
-                    error="confidence 필드는 숫자여야 한다.",
-                    attempted_tool_call=True,
-                )
-
         return ActionPlanParseResult(
             plan=ActionPlan(
                 action=BATCH_ACTION,
                 args={"actions": [_action_plan_to_dict(child) for child in child_plans]},
-                confidence=confidence,
             ),
             attempted_tool_call=True,
         )
 
     if "action" not in data:
-        attempted_tool_call = attempted_tool_call or any(key in data for key in ("args", "confidence"))
+        attempted_tool_call = attempted_tool_call or "args" in data
         if attempted_tool_call:
             return ActionPlanParseResult(
                 error="action 필드가 없다.",
@@ -1483,11 +1454,7 @@ def _parse_action_plan_result(raw: str) -> ActionPlanParseResult:
     )
 
 
-def _parse_action_plan_data(
-    data: dict[str, Any],
-    *,
-    default_confidence: float | None = None,
-) -> tuple[ActionPlan | None, str | None]:
+def _parse_action_plan_data(data: dict[str, Any]) -> tuple[ActionPlan | None, str | None]:
     action = str(data.get("action", "none"))
     args = data.get("args", {})
     if not isinstance(args, dict):
@@ -1497,19 +1464,7 @@ def _parse_action_plan_data(
     if action not in SUPPORTED_ACTIONS:
         return None, f"지원하지 않는 action이다: {action}"
 
-    raw_confidence = data.get("confidence")
-    if raw_confidence is None:
-        if default_confidence is not None:
-            confidence = default_confidence
-        else:
-            confidence = 0.0 if action == "none" else 1.0
-    else:
-        try:
-            confidence = float(raw_confidence)
-        except (TypeError, ValueError):
-            return None, "confidence 필드는 숫자여야 한다."
-
-    return ActionPlan(action=action, args=args, confidence=confidence), None
+    return ActionPlan(action=action, args=args), None
 
 
 def _clean_action_value(value: Any) -> Any:
@@ -1554,7 +1509,6 @@ def _looks_like_action_plan(raw: str) -> bool:
         marker in normalized
         for marker in (
             "args",
-            "confidence",
             "member_",
             "channel_",
             "style_",
