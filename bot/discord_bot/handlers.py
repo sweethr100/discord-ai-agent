@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import TYPE_CHECKING
 
@@ -11,8 +12,12 @@ from discord_bot.agent_actions import (
     ActionPlan,
     action_requires_confirmation,
     build_action_context,
+    build_channel_reference_context,
+    build_member_reference_context,
+    build_voice_reference_context,
     describe_action_plan,
     execute_agent_action,
+    resolve_action_plan_mentions,
     retry_agent_turn_after_validation,
     run_agent_turn,
     validate_action_plan,
@@ -117,11 +122,42 @@ async def handle_ai_request(
             limit=bot.config.channel_context_messages,
             char_limit=bot.config.channel_context_char_limit,
         )
+        discord_guild = interaction.guild if interaction else message.guild if message else None
+        requester = interaction.user if interaction else message.author if message else None
+        member_reference_context = (
+            await build_member_reference_context(
+                guild=discord_guild,
+                requester=requester,
+                prompt=prompt,
+                message=message,
+            )
+            if discord_guild is not None
+            else ""
+        )
+        current_channel = interaction.channel if interaction else message.channel if message else None
+        channel_reference_context = (
+            build_channel_reference_context(
+                guild=discord_guild,
+                current_channel=current_channel,
+                prompt=prompt,
+                message=message,
+            )
+            if discord_guild is not None
+            else ""
+        )
+        voice_reference_context = (
+            build_voice_reference_context(guild=discord_guild)
+            if discord_guild is not None
+            else ""
+        )
         agent_turn = await run_agent_turn(
             bot,
             prompt,
             system_prompt=system_prompt,
             channel_context=channel_context,
+            member_reference_context=member_reference_context,
+            channel_reference_context=channel_reference_context,
+            voice_reference_context=voice_reference_context,
         )
         action_plan = agent_turn.action_plan
         if action_plan is not None:
@@ -157,6 +193,9 @@ async def handle_ai_request(
                         validation_error=validation_error,
                         system_prompt=system_prompt,
                         channel_context=channel_context,
+                        member_reference_context=member_reference_context,
+                        channel_reference_context=channel_reference_context,
+                        voice_reference_context=voice_reference_context,
                     )
                 except ProviderResponseError:
                     logger.warning("Provider returned invalid validation replan for action: %s", action_plan.action)
@@ -193,6 +232,8 @@ async def handle_ai_request(
                     message=message,
                 )
                 return
+
+            action_plan = await resolve_action_plan_mentions(action_context, action_plan)
 
             if action_requires_confirmation(action_plan):
                 await _request_action_confirmation(
@@ -487,7 +528,7 @@ async def _generate_feedback_response(
         try:
             return await bot.agent.provider.generate_response(
                 retry_messages,
-                ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+                ProviderOptions(temperature=bot.agent.temperature, max_tokens=bot.agent.max_tokens),
             )
         except ProviderResponseError as exc:
             last_error = exc
@@ -539,6 +580,7 @@ class AgentActionConfirmView(discord.ui.View):
         self.system_prompt = system_prompt
         self.channel_context = channel_context
         self.completed = False
+        self._completion_lock = asyncio.Lock()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.requester_id:
@@ -557,18 +599,23 @@ class AgentActionConfirmView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
-        self.completed = True
-        self._disable_buttons()
-        await interaction.response.edit_message(
-            content=f"실행 중: {describe_action_plan(self.plan)}",
-            view=self,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
+        async with self._completion_lock:
+            if self.completed:
+                await interaction.response.send_message("이미 처리된 작업이에요.", ephemeral=True)
+                return
+            self.completed = True
+            self._disable_buttons()
+            accepted_content = f"{describe_action_plan(self.plan)} 수락됨."
+            await interaction.response.edit_message(
+                content=accepted_content,
+                view=self,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
         async def update_status(content: str) -> None:
             await _edit_ai_message(
                 self.response_message,
-                content=content,
+                content=_append_message_content(accepted_content, content),
                 view=None,
             )
 
@@ -579,7 +626,7 @@ class AgentActionConfirmView(discord.ui.View):
             logger.exception("Failed to execute confirmed AI action: %s", self.plan.action)
             await _edit_ai_message(
                 self.response_message,
-                content=GENERIC_USER_ERROR,
+                content=_append_message_content(accepted_content, GENERIC_USER_ERROR),
                 view=None,
             )
             self.stop()
@@ -595,7 +642,7 @@ class AgentActionConfirmView(discord.ui.View):
             confirmed=True,
         )
         chunks = split_discord_message(normalize_discord_markdown(response))
-        await _send_response_chunks_to_message(self.response_message, chunks)
+        await _append_response_chunks_to_message(self.response_message, accepted_content, chunks)
         self.stop()
 
     @discord.ui.button(label="거절", style=discord.ButtonStyle.secondary)
@@ -604,13 +651,18 @@ class AgentActionConfirmView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button,
     ) -> None:
-        self.completed = True
-        self._disable_buttons()
-        await interaction.response.edit_message(
-            content=f"거절했습니다. {describe_action_plan(self.plan)}",
-            view=self,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
+        async with self._completion_lock:
+            if self.completed:
+                await interaction.response.send_message("이미 처리된 작업이에요.", ephemeral=True)
+                return
+            self.completed = True
+            self._disable_buttons()
+            rejected_content = f"{describe_action_plan(self.plan)} 거절됨."
+            await interaction.response.edit_message(
+                content=rejected_content,
+                view=self,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         try:
             response = await _generate_rejection_feedback(
                 bot=self.bot,
@@ -621,15 +673,16 @@ class AgentActionConfirmView(discord.ui.View):
             )
         except Exception:
             logger.exception("Failed to generate rejection feedback: %s", self.plan.action)
-            await _send_followup_chunks_to_channel(
+            await _append_response_chunks_to_message(
                 self.response_message,
+                rejected_content,
                 [GENERIC_USER_ERROR],
             )
             self.stop()
             return
 
         chunks = split_discord_message(normalize_discord_markdown(response))
-        await _send_followup_chunks_to_channel(self.response_message, chunks)
+        await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
         self.stop()
 
     async def on_timeout(self) -> None:
@@ -932,6 +985,38 @@ async def _send_response_chunks_to_message(
             chunk,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+
+
+async def _append_response_chunks_to_message(
+    response_message: discord.Message | discord.InteractionMessage,
+    header: str,
+    chunks: list[str],
+) -> None:
+    if not chunks:
+        chunks = ["응답이 비어 있어요."]
+
+    content = "\n\n".join(chunk for chunk in chunks if chunk.strip())
+    await _edit_ai_message(
+        response_message,
+        content=_append_message_content(header, content or "응답이 비어 있어요."),
+        view=None,
+    )
+
+
+def _append_message_content(header: str, content: str) -> str:
+    header = header.strip()
+    content = content.strip()
+    if not content:
+        return header
+
+    separator = "\n\n"
+    max_length = 2000
+    available = max_length - len(header) - len(separator)
+    if available <= 0:
+        return header[:max_length]
+    if len(content) > available:
+        content = f"{content[: max(0, available - 1)]}..."
+    return f"{header}{separator}{content}"
 
 
 async def _send_followup_chunks_to_channel(

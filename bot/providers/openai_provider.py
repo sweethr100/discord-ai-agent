@@ -48,7 +48,8 @@ class OpenAIProvider(HttpProvider):
 def _extract_openai_content(data: dict[str, Any]) -> str:
     try:
         first_choice = data["choices"][0]
-        content = first_choice["message"]["content"]
+        message = first_choice["message"]
+        content = message["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise ProviderResponseError("OpenAI response did not include message content.") from exc
 
@@ -61,7 +62,11 @@ def _extract_openai_content(data: dict[str, Any]) -> str:
         content = "".join(text_parts)
 
     if not isinstance(content, str) or not content.strip():
-        raise ProviderResponseError("OpenAI response content was empty.")
+        finish_reason = first_choice.get("finish_reason", "unknown")
+        message_keys = ", ".join(sorted(str(key) for key in message.keys())) if isinstance(message, dict) else "unknown"
+        raise ProviderResponseError(
+            f"OpenAI response content was empty (finish_reason={finish_reason}, message_keys={message_keys})."
+        )
 
     content = content.strip()
     if first_choice.get("finish_reason") == "length":

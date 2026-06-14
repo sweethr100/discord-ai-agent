@@ -33,10 +33,13 @@ ACTION_PLANNER_PROMPT = """\
 
 예시:
 사용자: 찐코 통방에서 연결 끊어달라고
-출력: {"action":"member_disconnect_voice","args":{"member":"찐코"},"confidence":0.95}
+출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"},"confidence":0.95}
 
 사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
-출력: {"actions":[{"action":"member_nickname","args":{"member":"me","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"bepl_0505","nickname":"브론즈베플"}}],"confidence":0.95}
+출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}],"confidence":0.95}
+
+사용자: 음성1에 들어간 모든 유저의 마이크 음소거 해줘
+출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}],"confidence":0.95}
 
 지원 도구 action:
 - autochannel_add: args channel, mode, keywords
@@ -125,20 +128,34 @@ ACTION_PLANNER_PROMPT = """\
 규칙:
 - 실행 요청이 명확할 때만 도구 action을 선택하라.
 - 사용자가 한 문장에 여러 서버 관리 작업을 요청하면 actions 배열로 여러 도구 호출을 순서대로 출력하라.
+- 사용자가 "모든", "전부", "다", "전체"처럼 여러 대상을 한 번에 지정하면 가능한 경우 actions 배열로 대상별 도구 호출을 모두 출력하라.
 - "설정법 알려줘", "명령어 뭐야", "할 수 있어?" 같은 설명 요청은 none이다.
 - 삭제, 차단, 추방, 대량 삭제 같은 파괴적 작업은 사용자가 명확히 실행을 요청한 경우에만 선택하라.
 - "통방", "음성방", "보이스", "VC"는 음성 채널을 뜻할 수 있다.
 - "<멤버> 통방에서 연결 끊어", "<멤버> 음성방에서 내보내", "<멤버> 보이스 끊어달라고" 같은 요청은 member_disconnect_voice 실행 요청이다.
+- "마이크 음소거", "마이크 꺼", "뮤트"는 member_mute_voice의 muted=true 실행 요청이다.
+- "마이크 음소거 해제", "뮤트 해제"는 member_mute_voice의 muted=false 실행 요청이다.
+- "헤드셋 음소거", "소리 못 듣게", "데afen"은 member_deafen_voice의 deafened=true 실행 요청이다.
+- "헤드셋 음소거 해제", "소리 듣게"는 member_deafen_voice의 deafened=false 실행 요청이다.
 - 지원 도구로 가능한 서버 관리 작업을 "할 수 없다", "직접 해야 한다", "원격으로 개입할 수 없다"고 자연어로 답하지 말고 도구 호출 JSON을 출력하라.
 - 최근 채널 대화 문맥은 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라.
 - 현재 요청이 "120분 해줘", "해제해줘", "그렇게 해줘"처럼 이전 서버 관리 요청의 누락 정보를 보충하는 말이면, 최근 문맥의 해당 요청과 합쳐 하나의 도구 action을 선택하라.
 - 과거 메시지만으로 새 작업을 실행하지 마라. 반드시 현재 요청에 실행 의도가 있어야 한다.
 - member_timeout에 대상은 있지만 duration_minutes가 없고 해제 요청도 아니면 member_timeout_duration_needed를 선택하라.
 - channel/member/role/thread/forum/emoji/sticker/sound/event/webhook/integration은 Discord mention 또는 ID가 있으면 그대로 넣어라. 예: <#123>, <@456>, <@&789>.
-- member가 멘션이나 ID가 아니어도 사용자가 말한 별명, 표시 이름, 유저명을 문자열 그대로 넣어라.
-- 사용자가 "나", "내", "저", "본인", "me"를 대상 멤버로 말하면 member 값을 "me"로 넣어라.
+- 아래 입력에 "현재 요청자" 또는 "멤버 목록"이 제공되고 대상 멤버가 그 안에 있으면 member 값은 반드시 해당 id 문자열을 사용하라.
+- 사용자가 "나", "내", "저", "본인", "me"를 대상 멤버로 말하면 현재 요청자의 id를 member 값으로 넣어라.
+- 멤버 목록에 없는 멤버 ID를 추측하거나 만들어내지 마라. 목록에서 찾지 못한 경우에만 사용자가 말한 별명, 표시 이름, 유저명을 문자열 그대로 넣어라.
+- 아래 입력에 "음성 채널 접속자 목록"이 제공되고 사용자가 특정 음성/스테이지 채널의 모든 유저에게 작업을 요청하면, 해당 채널의 listed members 각각을 대상으로 actions 배열을 출력하라.
+- 음성 채널의 모든 유저에게 member_mute_voice/member_deafen_voice/member_disconnect_voice/member_move_voice 같은 멤버별 음성 작업을 적용할 수 있다. "단일 기능만 구현되어 있다"고 말하지 마라.
+- 음성 채널 접속자 목록에 대상 채널은 있지만 접속자가 없으면 {"action":"none","args":{"content":"해당 음성 채널에 접속 중인 멤버가 없다고 짧게 알리는 문장"},"confidence":1}를 출력하라.
 - "별명 되돌려", "별명 초기화", "별명 없애"는 member_nickname의 nickname을 null로 넣어라.
-- 현재 채널을 뜻하면 channel을 "current"로 넣어라.
+- 아래 입력에 "현재 채널" 또는 "채널 목록"이 제공되고 대상 채널이 그 안에 있으면 channel/source_channel/destination_channel/category/forum/thread 값은 반드시 해당 mention 문자열(<#id>)을 사용하라.
+- channels/default_channels처럼 채널 배열을 받는 인자도 목록에 있는 채널은 mention 문자열(<#id>) 배열로 넣어라.
+- 사용자가 현재 채널을 뜻하면 현재 채널의 mention이 제공된 경우 그 mention을 넣고, 제공되지 않은 경우에만 channel을 "current"로 넣어라.
+- 채널 목록에 없는 채널 ID를 추측하거나 만들어내지 마라. 목록에서 찾지 못한 경우에만 사용자가 말한 채널 이름을 문자열 그대로 넣어라.
+- 사용자가 만들 채널 이름을 말하면 철자와 문자를 그대로 name에 넣어라. 한글/영문/숫자/기호를 임의로 바꾸거나 바이트 토큰으로 쓰지 마라.
+- 사용자가 채널 종류를 따로 말하지 않고 "채널 만들어줘"라고 하면 type은 text로 넣어라.
 - type은 text, voice, stage, category, forum, media 중 하나만 사용하라.
 - mode는 always, question_only, keyword 중 하나만 사용하라.
 - style은 기본 스타일(default, classic, efficient, study, grok, spicy, kids) 또는 서버에 추가된 스타일 이름을 사용하라.
@@ -177,16 +194,19 @@ AGENT_TOOL_PROMPT = """\
 
 도구 호출 예시:
 사용자: 찐코 통방에서 연결 끊어달라고
-출력: {"action":"member_disconnect_voice","args":{"member":"찐코"},"confidence":0.95}
+출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"},"confidence":0.95}
 
 사용자: 리건한테 관리자 역할 줘
-출력: {"action":"role_add","args":{"member":"리건","role":"관리자"},"confidence":0.9}
+출력: {"action":"role_add","args":{"member":"123456789012345678","role":"관리자"},"confidence":0.9}
 
 사용자: 내 별명 되돌려놔
-출력: {"action":"member_nickname","args":{"member":"me","nickname":null},"confidence":0.95}
+출력: {"action":"member_nickname","args":{"member":"123456789012345678","nickname":null},"confidence":0.95}
 
 사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
-출력: {"actions":[{"action":"member_nickname","args":{"member":"me","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"bepl_0505","nickname":"브론즈베플"}}],"confidence":0.95}
+출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}],"confidence":0.95}
+
+사용자: 음성1에 들어간 모든 유저의 마이크 음소거 해줘
+출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}],"confidence":0.95}
 
 사용자: 음성방에서 사람 내보낼 수 있어?
 출력: 음성 채널 멤버 연결 끊기 같은 서버 관리 작업을 도울 수 있어요. 실행하려면 대상 멤버를 말해 주세요.
@@ -298,8 +318,37 @@ READ_ONLY_ACTIONS = {
 
 SUPPORTED_ACTIONS = set(ACTION_STATUS_LABELS) | {"none"}
 ACTION_JSON_REPAIR_ATTEMPTS = 2
-MAX_BATCH_ACTIONS = 10
+MAX_BATCH_ACTIONS = 50
 BATCH_ACTION = "batch"
+BATCH_CONCURRENCY_LIMIT = 10
+MAX_MEMBER_REFERENCE_ENTRIES = 500
+MAX_CHANNEL_REFERENCE_ENTRIES = 500
+CHANNEL_NAME_UPDATE_COOLDOWN_SECONDS = 600.0
+_CHANNEL_NAME_UPDATE_COOLDOWNS: dict[int, float] = {}
+MEMBER_TARGET_ACTIONS = {
+    "member_kick",
+    "member_ban",
+    "member_timeout",
+    "member_nickname",
+    "member_move_voice",
+    "member_mute_voice",
+    "member_deafen_voice",
+    "member_disconnect_voice",
+    "role_add",
+    "role_remove",
+}
+CHANNEL_REFERENCE_FIELDS = {
+    "channel",
+    "source_channel",
+    "destination_channel",
+    "category",
+    "forum",
+    "thread",
+}
+CHANNEL_REFERENCE_LIST_FIELDS = {
+    "channels",
+    "default_channels",
+}
 
 
 @dataclass(frozen=True)
@@ -353,8 +402,18 @@ async def plan_agent_action(
     prompt: str,
     *,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> ActionPlan | None:
-    plan = await _plan_action(bot, prompt, channel_context=channel_context)
+    plan = await _plan_action(
+        bot,
+        prompt,
+        channel_context=channel_context,
+        member_reference_context=member_reference_context,
+        channel_reference_context=channel_reference_context,
+        voice_reference_context=voice_reference_context,
+    )
     if plan is None or plan.action == "none" or plan.confidence < 0.65:
         return None
     return plan
@@ -366,12 +425,18 @@ async def run_agent_turn(
     *,
     system_prompt: str,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> AgentTurn:
     raw = await _generate_agent_turn(
         bot,
         prompt,
         system_prompt=system_prompt,
         channel_context=channel_context,
+        member_reference_context=member_reference_context,
+        channel_reference_context=channel_reference_context,
+        voice_reference_context=voice_reference_context,
     )
     return await _resolve_agent_turn_from_raw(
         bot,
@@ -379,6 +444,9 @@ async def run_agent_turn(
         raw=raw,
         system_prompt=system_prompt,
         channel_context=channel_context,
+        member_reference_context=member_reference_context,
+        channel_reference_context=channel_reference_context,
+        voice_reference_context=voice_reference_context,
     )
 
 
@@ -390,6 +458,9 @@ async def retry_agent_turn_after_validation(
     validation_error: str,
     system_prompt: str,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> AgentTurn:
     raw = await _retry_agent_action_after_validation(
         bot,
@@ -398,6 +469,9 @@ async def retry_agent_turn_after_validation(
         validation_error=validation_error,
         system_prompt=system_prompt,
         channel_context=channel_context,
+        member_reference_context=member_reference_context,
+        channel_reference_context=channel_reference_context,
+        voice_reference_context=voice_reference_context,
     )
     return await _resolve_agent_turn_from_raw(
         bot,
@@ -405,6 +479,9 @@ async def retry_agent_turn_after_validation(
         raw=raw,
         system_prompt=system_prompt,
         channel_context=channel_context,
+        member_reference_context=member_reference_context,
+        channel_reference_context=channel_reference_context,
+        voice_reference_context=voice_reference_context,
     )
 
 
@@ -415,6 +492,9 @@ async def _resolve_agent_turn_from_raw(
     raw: str,
     system_prompt: str,
     channel_context: str,
+    member_reference_context: str,
+    channel_reference_context: str,
+    voice_reference_context: str,
 ) -> AgentTurn:
     for _attempt in range(ACTION_JSON_REPAIR_ATTEMPTS + 1):
         parse_result = _parse_action_plan_result(raw)
@@ -432,6 +512,9 @@ async def _resolve_agent_turn_from_raw(
                 issue=f"도구 호출 신뢰도가 낮다: {parse_result.plan.confidence}",
                 system_prompt=system_prompt,
                 channel_context=channel_context,
+                member_reference_context=member_reference_context,
+                channel_reference_context=channel_reference_context,
+                voice_reference_context=voice_reference_context,
             )
             return AgentTurn(content=content)
         if not parse_result.error or not parse_result.attempted_tool_call:
@@ -446,6 +529,9 @@ async def _resolve_agent_turn_from_raw(
             parse_error=parse_result.error,
             system_prompt=system_prompt,
             channel_context=channel_context,
+            member_reference_context=member_reference_context,
+            channel_reference_context=channel_reference_context,
+            voice_reference_context=voice_reference_context,
         )
     content = await _generate_action_issue_feedback(
         bot,
@@ -453,6 +539,9 @@ async def _resolve_agent_turn_from_raw(
         issue="서버 관리 작업 요청을 올바른 도구 호출 JSON으로 정리하지 못했다.",
         system_prompt=system_prompt,
         channel_context=channel_context,
+        member_reference_context=member_reference_context,
+        channel_reference_context=channel_reference_context,
+        voice_reference_context=voice_reference_context,
     )
     return AgentTurn(content=content)
 
@@ -489,6 +578,168 @@ def build_action_context(
     )
 
 
+async def build_member_reference_context(
+    *,
+    guild: discord.Guild,
+    requester: discord.User | discord.Member | None,
+    prompt: str,
+    message: discord.Message | None = None,
+    limit: int = MAX_MEMBER_REFERENCE_ENTRIES,
+) -> str:
+    candidates: dict[int, tuple[discord.Member, int]] = {}
+
+    def add_candidate(member: discord.Member | None, score: int) -> None:
+        if member is None:
+            return
+        current = candidates.get(member.id)
+        if current is None or score > current[1]:
+            candidates[member.id] = (member, score)
+
+    requester_member = requester if isinstance(requester, discord.Member) else None
+    add_candidate(requester_member, 1000)
+
+    if message is not None:
+        for member in message.mentions:
+            if isinstance(member, discord.Member):
+                add_candidate(member, 950)
+
+    query_terms = _extract_member_query_terms(prompt)
+    for member in guild.members:
+        score = _score_member_for_prompt(member, prompt, query_terms)
+        add_candidate(member, max(score, 10))
+
+    for member in _voice_channel_members(guild):
+        score = _score_member_for_prompt(member, prompt, query_terms)
+        add_candidate(member, max(score, 120))
+
+    for term in query_terms[:8]:
+        try:
+            queried = await guild.query_members(query=term, limit=10)
+        except (discord.Forbidden, discord.HTTPException):
+            queried = []
+        for member in queried:
+            score = _score_member_for_prompt(member, prompt, query_terms)
+            add_candidate(member, max(score, 150))
+
+    if not candidates:
+        return ""
+
+    ranked = sorted(candidates.values(), key=lambda item: (-item[1], item[0].display_name.casefold(), item[0].id))
+    selected = [member for member, _score in ranked[:limit]]
+
+    lines: list[str] = []
+    if requester_member is not None:
+        lines.append(
+            "현재 요청자: "
+            f"id={requester_member.id}, mention={requester_member.mention}, "
+            f"display_name={requester_member.display_name}, username={requester_member.name}"
+        )
+    total_cached = len(guild.members)
+    if total_cached > limit:
+        lines.append(f"멤버 목록: 캐시된 {total_cached}명 중 관련도 높은 {limit}명")
+    else:
+        lines.append(f"멤버 목록: 캐시된 {total_cached}명 전체")
+    for member in selected:
+        labels = _member_reference_labels(member)
+        lines.append(f"- id={member.id}, mention={member.mention}, {labels}")
+    return "\n".join(lines)
+
+
+def build_channel_reference_context(
+    *,
+    guild: discord.Guild,
+    current_channel: discord.abc.GuildChannel | discord.Thread | discord.abc.PrivateChannel | None,
+    prompt: str,
+    message: discord.Message | None = None,
+    limit: int = MAX_CHANNEL_REFERENCE_ENTRIES,
+) -> str:
+    candidates: dict[int, tuple[discord.abc.GuildChannel | discord.Thread, int]] = {}
+
+    def add_candidate(channel: Any, score: int) -> None:
+        if not isinstance(channel, (discord.abc.GuildChannel, discord.Thread)):
+            return
+        current = candidates.get(channel.id)
+        if current is None or score > current[1]:
+            candidates[channel.id] = (channel, score)
+
+    current_guild_channel = (
+        current_channel
+        if isinstance(current_channel, (discord.abc.GuildChannel, discord.Thread))
+        else None
+    )
+    add_candidate(current_guild_channel, 1000)
+
+    if message is not None:
+        for channel in getattr(message, "channel_mentions", []):
+            add_candidate(channel, 950)
+
+    query_terms = _extract_channel_query_terms(prompt)
+    for channel in _all_reference_channels(guild):
+        score = _score_channel_for_prompt(channel, prompt, query_terms)
+        add_candidate(channel, max(score, 10))
+
+    if not candidates:
+        return ""
+
+    ranked = sorted(candidates.values(), key=lambda item: (-item[1], _channel_sort_key(item[0])))
+    selected = [channel for channel, _score in ranked[:limit]]
+
+    lines: list[str] = []
+    if current_guild_channel is not None:
+        lines.append(
+            "현재 채널: "
+            f"id={current_guild_channel.id}, mention={_channel_mention(current_guild_channel)}, "
+            f"name={_single_line_field(getattr(current_guild_channel, 'name', ''))}, "
+            f"type={_channel_reference_type(current_guild_channel)}"
+        )
+
+    total_cached = len(_all_reference_channels(guild))
+    if total_cached > limit:
+        lines.append(f"채널 목록: 캐시된 {total_cached}개 중 관련도 높은 {limit}개")
+    else:
+        lines.append(f"채널 목록: 캐시된 {total_cached}개 전체")
+    for channel in selected:
+        lines.append(_channel_reference_line(channel))
+    return "\n".join(lines)
+
+
+def build_voice_reference_context(
+    *,
+    guild: discord.Guild,
+    limit_channels: int = 50,
+    limit_members: int = MAX_BATCH_ACTIONS,
+) -> str:
+    voice_channels = [*guild.voice_channels, *guild.stage_channels]
+    if not voice_channels:
+        return ""
+
+    occupied_channels = [channel for channel in voice_channels if channel.members]
+    if not occupied_channels:
+        lines = ["음성 채널 접속자 목록: 현재 접속 중인 멤버 없음"]
+        for channel in voice_channels[:limit_channels]:
+            lines.append(
+                f"- channel={_channel_mention(channel)}, channel_id={channel.id}, "
+                f"channel_name={_single_line_field(channel.name)}, type={_channel_reference_type(channel)}, member_count=0"
+            )
+        return "\n".join(lines)
+
+    lines = ["음성 채널 접속자 목록:"]
+    for channel in occupied_channels[:limit_channels]:
+        members = list(channel.members)
+        lines.append(
+            f"- channel={_channel_mention(channel)}, channel_id={channel.id}, "
+            f"channel_name={_single_line_field(channel.name)}, type={_channel_reference_type(channel)}, "
+            f"member_count={len(members)}"
+        )
+        for member in members[:limit_members]:
+            lines.append(f"  - {_voice_member_reference_line(member)}")
+        if len(members) > limit_members:
+            lines.append(f"  - ... {len(members) - limit_members}명 더 있음")
+    if len(occupied_channels) > limit_channels:
+        lines.append(f"- ... 접속자 있는 음성 채널 {len(occupied_channels) - limit_channels}개 더 있음")
+    return "\n".join(lines)
+
+
 async def execute_agent_action(context: "ActionContext", plan: ActionPlan) -> str:
     return await _execute_plan(context, plan)
 
@@ -504,18 +755,7 @@ async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> st
                 return f"{describe_action_plan(child)}: {validation_error}"
         return None
 
-    if plan.action in {
-        "member_kick",
-        "member_ban",
-        "member_timeout",
-        "member_nickname",
-        "member_move_voice",
-        "member_mute_voice",
-        "member_deafen_voice",
-        "member_disconnect_voice",
-        "role_add",
-        "role_remove",
-    }:
+    if plan.action in MEMBER_TARGET_ACTIONS:
         member = await _resolve_member(context, plan.args.get("member"))
         if member is None:
             requested = _human_target(plan.args.get("member"), fallback="대상 멤버")
@@ -572,6 +812,48 @@ async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> st
             return f"{member.display_name} 님이 현재 음성 채널에 접속해 있지 않아요."
 
     return None
+
+
+async def resolve_action_plan_mentions(context: "ActionContext", plan: ActionPlan) -> ActionPlan:
+    if plan.action == BATCH_ACTION:
+        actions = _batch_action_plans(plan)
+        if not actions:
+            return plan
+
+        resolved_actions: list[dict[str, Any]] = []
+        for child in actions:
+            resolved_child = await resolve_action_plan_mentions(context, child)
+            resolved_actions.append(_action_plan_to_dict(resolved_child))
+
+        return ActionPlan(
+            action=plan.action,
+            args={**plan.args, "actions": resolved_actions},
+            confidence=plan.confidence,
+        )
+
+    resolved_args = dict(plan.args)
+
+    if plan.action in MEMBER_TARGET_ACTIONS and "member" in resolved_args:
+        member = await _resolve_member(context, resolved_args.get("member"))
+        if member is not None:
+            resolved_args["member"] = member.mention
+
+    for field in CHANNEL_REFERENCE_FIELDS:
+        if field not in resolved_args:
+            continue
+        channel = _resolve_channel_reference_field(context, field, resolved_args.get(field))
+        if channel is not None:
+            resolved_args[field] = _channel_mention(channel)
+
+    for field in CHANNEL_REFERENCE_LIST_FIELDS:
+        if field not in resolved_args:
+            continue
+        resolved_args[field] = _resolve_channel_reference_list(context, resolved_args.get(field))
+
+    if resolved_args == plan.args:
+        return plan
+
+    return ActionPlan(action=plan.action, args=resolved_args, confidence=plan.confidence)
 
 
 def action_requires_confirmation(plan: ActionPlan) -> bool:
@@ -647,8 +929,8 @@ def _natural_action_summary(plan: ActionPlan) -> str:
 
     if plan.action == "channel_create":
         name = _human_target(args.get("name"), fallback="새 채널")
-        channel_type = _human_target(args.get("type"), fallback="채널")
-        return f"{name} {channel_type} 채널 생성"
+        channel_type = _channel_type_label(args.get("type"))
+        return f"{name} {channel_type} 생성"
 
     if plan.action == "channel_delete":
         channel = _human_target(args.get("channel"), fallback="대상 채널")
@@ -674,12 +956,25 @@ def _natural_action_summary(plan: ActionPlan) -> str:
 
 
 def _human_target(value: Any, *, fallback: str) -> str:
-    text = str(value or "").strip()
+    text = _decode_hex_byte_tokens(str(value or "")).strip()
     if not text:
         return fallback
     if len(text) <= 80:
         return text
     return f"{text[:79]}..."
+
+
+def _channel_type_label(value: Any) -> str:
+    channel_type = str(value or "text").strip().casefold()
+    labels = {
+        "text": "텍스트 채널",
+        "voice": "음성 채널",
+        "stage": "스테이지 채널",
+        "category": "카테고리",
+        "forum": "포럼 채널",
+        "media": "미디어 채널",
+    }
+    return labels.get(channel_type, "채널")
 
 
 @dataclass
@@ -703,10 +998,49 @@ async def _plan_action(
     prompt: str,
     *,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> ActionPlan | None:
     messages: list[Message] = [
         {"role": "system", "content": ACTION_PLANNER_PROMPT},
     ]
+    if member_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "현재 요청에서 멤버 대상을 ID로 고를 때만 참고할 Discord 멤버 목록이다. "
+                    "대상 멤버가 이 목록에 있으면 member 값은 반드시 id 문자열로 넣고, "
+                    "목록에 없는 ID는 추측하지 마라.\n"
+                    f"{member_reference_context}"
+                ),
+            }
+        )
+    if channel_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "현재 요청에서 채널 대상을 멘션으로 고를 때만 참고할 Discord 채널 목록이다. "
+                    "대상 채널이 이 목록에 있으면 channel/source_channel/destination_channel/category/forum/thread 값은 "
+                    "반드시 mention 문자열(<#id>)로 넣고, 목록에 없는 ID는 추측하지 마라.\n"
+                    f"{channel_reference_context}"
+                ),
+            }
+        )
+    if voice_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "현재 음성/스테이지 채널 접속자 목록이다. "
+                    "사용자가 특정 음성 채널의 모든 유저에게 멤버별 음성 작업을 요청하면 "
+                    "listed members 각각에 대해 actions 배열로 도구 호출을 만들어라.\n"
+                    f"{voice_reference_context}"
+                ),
+            }
+        )
     if channel_context:
         messages.append(
             {
@@ -721,7 +1055,7 @@ async def _plan_action(
     messages.append({"role": "user", "content": f"현재 요청: {prompt}"})
     raw = await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=0.0, max_tokens=800),
+        ProviderOptions(temperature=0.0, max_tokens=bot.agent.max_tokens),
     )
     return _parse_action_plan(raw)
 
@@ -732,10 +1066,53 @@ async def _generate_agent_turn(
     *,
     system_prompt: str,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> str:
     messages: list[Message] = [
         {"role": "system", "content": f"{system_prompt}\n\n{AGENT_TOOL_PROMPT}"},
     ]
+    if member_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "현재 요청에서 멤버 대상을 ID로 고를 때만 참고할 Discord 멤버 목록이다. "
+                    "서버 관리 도구 호출 JSON을 만들 때 대상 멤버가 이 목록에 있으면 "
+                    "member 값은 이름이 아니라 반드시 id 문자열로 넣어라. "
+                    "목록에 없는 ID는 추측하지 마라.\n"
+                    f"{member_reference_context}"
+                ),
+            }
+        )
+    if channel_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "현재 요청에서 채널 대상을 멘션으로 고를 때만 참고할 Discord 채널 목록이다. "
+                    "서버 관리 도구 호출 JSON을 만들 때 대상 채널이 이 목록에 있으면 "
+                    "채널형 인자 값은 이름이나 ID가 아니라 반드시 mention 문자열(<#id>)로 넣어라. "
+                    "목록에 없는 ID는 추측하지 마라.\n"
+                    f"{channel_reference_context}"
+                ),
+            }
+        )
+    if voice_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "현재 음성/스테이지 채널 접속자 목록이다. "
+                    "서버 관리 도구 호출 JSON을 만들 때, 사용자가 특정 음성 채널의 모든 유저/전원/전체에게 "
+                    "마이크 음소거, 헤드셋 음소거, 연결 끊기, 이동 같은 멤버별 음성 작업을 요청하면 "
+                    "그 채널의 listed members 각각을 대상으로 actions 배열을 출력하라. "
+                    "단일 기능만 가능하다고 답하지 마라.\n"
+                    f"{voice_reference_context}"
+                ),
+            }
+        )
     if channel_context:
         messages.append(
             {
@@ -762,6 +1139,9 @@ async def _retry_agent_action_json(
     parse_error: str,
     system_prompt: str,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> str:
     messages: list[Message] = [
         {
@@ -787,6 +1167,39 @@ async def _retry_agent_action_json(
                 ),
             }
         )
+    if member_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "멤버 목록이다. 대상 멤버가 이 목록에 있으면 member 값은 반드시 id 문자열로 고쳐라. "
+                    "목록에 없는 ID는 추측하지 마라.\n"
+                    f"{member_reference_context}"
+                ),
+            }
+        )
+    if channel_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "채널 목록이다. 대상 채널이 이 목록에 있으면 채널형 인자 값은 반드시 mention 문자열(<#id>)로 고쳐라. "
+                    "목록에 없는 ID는 추측하지 마라.\n"
+                    f"{channel_reference_context}"
+                ),
+            }
+        )
+    if voice_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "음성 채널 접속자 목록이다. 특정 음성 채널의 모든 유저 대상 요청이면 "
+                    "listed members 각각에 대해 actions 배열로 고쳐라.\n"
+                    f"{voice_reference_context}"
+                ),
+            }
+        )
     messages.append(
         {
             "role": "user",
@@ -799,7 +1212,7 @@ async def _retry_agent_action_json(
     )
     return await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=0.0, max_tokens=800),
+        ProviderOptions(temperature=0.0, max_tokens=bot.agent.max_tokens),
     )
 
 
@@ -811,6 +1224,9 @@ async def _retry_agent_action_after_validation(
     validation_error: str,
     system_prompt: str,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> str:
     messages: list[Message] = [
         {
@@ -838,6 +1254,39 @@ async def _retry_agent_action_after_validation(
                 ),
             }
         )
+    if member_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "멤버 목록이다. 대상 멤버가 이 목록에 있으면 member 값은 반드시 id 문자열로 고쳐라. "
+                    "목록에 없는 ID는 추측하지 마라.\n"
+                    f"{member_reference_context}"
+                ),
+            }
+        )
+    if channel_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "채널 목록이다. 대상 채널이 이 목록에 있으면 채널형 인자 값은 반드시 mention 문자열(<#id>)로 고쳐라. "
+                    "목록에 없는 ID는 추측하지 마라.\n"
+                    f"{channel_reference_context}"
+                ),
+            }
+        )
+    if voice_reference_context:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "음성 채널 접속자 목록이다. 특정 음성 채널의 모든 유저 대상 요청이면 "
+                    "listed members 각각에 대해 actions 배열로 고쳐라.\n"
+                    f"{voice_reference_context}"
+                ),
+            }
+        )
     messages.append(
         {
             "role": "user",
@@ -850,7 +1299,7 @@ async def _retry_agent_action_after_validation(
     )
     return await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=0.0, max_tokens=800),
+        ProviderOptions(temperature=0.0, max_tokens=bot.agent.max_tokens),
     )
 
 
@@ -861,6 +1310,9 @@ async def _generate_action_issue_feedback(
     issue: str,
     system_prompt: str,
     channel_context: str = "",
+    member_reference_context: str = "",
+    channel_reference_context: str = "",
+    voice_reference_context: str = "",
 ) -> str:
     messages: list[Message] = [
         {
@@ -894,7 +1346,7 @@ async def _generate_action_issue_feedback(
     )
     return await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=bot.agent.temperature, max_tokens=300),
+        ProviderOptions(temperature=bot.agent.temperature, max_tokens=bot.agent.max_tokens),
     )
 
 
@@ -1040,6 +1492,7 @@ def _parse_action_plan_data(
     args = data.get("args", {})
     if not isinstance(args, dict):
         return None, "args 필드는 객체여야 한다."
+    args = _clean_action_value(args)
 
     if action not in SUPPORTED_ACTIONS:
         return None, f"지원하지 않는 action이다: {action}"
@@ -1057,6 +1510,30 @@ def _parse_action_plan_data(
             return None, "confidence 필드는 숫자여야 한다."
 
     return ActionPlan(action=action, args=args, confidence=confidence), None
+
+
+def _clean_action_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _decode_hex_byte_tokens(value)
+    if isinstance(value, list):
+        return [_clean_action_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_action_value(item) for key, item in value.items()}
+    return value
+
+
+def _decode_hex_byte_tokens(text: str) -> str:
+    def replace_match(match: re.Match[str]) -> str:
+        tokens = re.findall(r"<0x([0-9A-Fa-f]{2})>", match.group(0))
+        if not tokens:
+            return match.group(0)
+        data = bytes(int(token, 16) for token in tokens)
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return match.group(0)
+
+    return re.sub(r"(?:<0x[0-9A-Fa-f]{2}>)+", replace_match, text)
 
 
 def _looks_like_action_plan(raw: str) -> bool:
@@ -1343,8 +1820,7 @@ async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
         result = "그 작업은 아직 제가 실행할 수 있는 도구로 연결되어 있지 않아요."
 
     if _looks_successful(result):
-        await _emit_status(context, f"{action_label}했습니다.")
-        await asyncio.sleep(0.6)
+        await _emit_status(context, "생각 중...")
     else:
         await _emit_status(context, "실행하지 못했습니다.")
         await asyncio.sleep(0.3)
@@ -1356,13 +1832,31 @@ async def _execute_batch_plan(context: ActionContext, plan: ActionPlan) -> str:
     if not actions:
         return "실행할 작업 목록을 찾지 못했어요."
 
-    results: list[str] = []
     total = len(actions)
-    for index, child in enumerate(actions, start=1):
-        await _emit_status(context, f"여러 작업 실행 중... ({index}/{total}) {describe_action_plan(child)}")
-        result = await _execute_plan(context, child)
-        results.append(f"{index}. {describe_action_plan(child)}: {result}")
+    await _emit_status(context, f"여러 작업 병렬 실행 중... (총 {total}개)")
 
+    semaphore = asyncio.Semaphore(BATCH_CONCURRENCY_LIMIT)
+
+    async def run_child(index: int, child: ActionPlan) -> str:
+        child_context = ActionContext(
+            bot=context.bot,
+            guild=context.guild,
+            channel=context.channel,
+            user=context.user,
+            message=context.message,
+            status_callback=None,
+        )
+        try:
+            async with semaphore:
+                result = await _execute_plan(child_context, child)
+        except Exception as exc:
+            result = f"실행 중 오류가 났어요: {exc}"
+        return f"{index}. {describe_action_plan(child)}: {result}"
+
+    results = await asyncio.gather(
+        *(run_child(index, child) for index, child in enumerate(actions, start=1))
+    )
+    await _emit_status(context, "생각 중...")
     return "\n".join(results)
 
 
@@ -1563,7 +2057,7 @@ async def _channel_create(context: ActionContext, args: dict[str, Any]) -> str:
     if not _bot_has(context, "manage_channels"):
         return "봇에게 Manage Channels 권한이 없어서 채널을 만들 수 없어요."
 
-    name = str(args.get("name") or "").strip()
+    name = _decode_hex_byte_tokens(str(args.get("name") or "")).strip()
     if not name:
         return "만들 채널 이름을 알려주세요."
 
@@ -1722,12 +2216,30 @@ async def _channel_update(context: ActionContext, args: dict[str, Any]) -> str:
     if not edit_kwargs:
         return "변경할 채널 설정을 찾지 못했어요. 이름, 주제, 슬로우모드, NSFW, 비트레이트, 유저 제한, 카테고리, 위치, 포럼 기본값 중 하나를 알려주세요."
 
+    edit_kwargs = _changed_channel_edit_kwargs(channel, edit_kwargs)
+    if not edit_kwargs:
+        label = channel.mention if hasattr(channel, "mention") else f"`{channel.name}`"
+        return f"{label} 채널 설정은 이미 요청한 값으로 되어 있어요."
+
+    if "name" in edit_kwargs:
+        cooldown_remaining = _channel_name_update_cooldown_remaining(channel.id)
+        if cooldown_remaining > 0:
+            minutes = max(1, int((cooldown_remaining + 59) // 60))
+            return f"{channel.mention} 채널 이름은 방금 변경해서 Discord 제한 때문에 약 {minutes}분 뒤에 다시 바꿀 수 있어요."
+
     try:
         await channel.edit(**edit_kwargs, reason=_audit_reason(context, "AI agent channel update"))
     except discord.Forbidden:
         return "Discord가 채널 변경을 거부했어요. 봇 권한이나 채널별 권한을 확인해 주세요."
     except discord.HTTPException as exc:
+        if getattr(exc, "status", None) == 429:
+            if "name" in edit_kwargs:
+                _mark_channel_name_update_cooldown(channel.id)
+            return "Discord 채널 변경 제한에 걸렸어요. 특히 채널 이름 변경은 잠시 기다린 뒤 다시 시도해야 해요."
         return f"채널 변경에 실패했어요: {exc.text or exc}"
+
+    if "name" in edit_kwargs:
+        _mark_channel_name_update_cooldown(channel.id)
 
     changed = ", ".join(f"`{key}`" for key in edit_kwargs)
     label = channel.mention if hasattr(channel, "mention") else f"`{channel.name}`"
@@ -1753,6 +2265,77 @@ async def _channel_delete(context: ActionContext, args: dict[str, Any]) -> str:
         return f"채널 삭제에 실패했어요: {exc.text or exc}"
 
     return f"`{name}` 채널을 삭제했어요."
+
+
+def _changed_channel_edit_kwargs(
+    channel: discord.abc.GuildChannel | discord.Thread,
+    edit_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    changed: dict[str, Any] = {}
+    for key, value in edit_kwargs.items():
+        if key == "name":
+            if str(getattr(channel, "name", "")) != str(value):
+                changed[key] = value
+            continue
+        if key == "topic":
+            if str(getattr(channel, "topic", "") or "") != str(value or ""):
+                changed[key] = value
+            continue
+        if key == "slowmode_delay":
+            if int(getattr(channel, "slowmode_delay", 0) or 0) != int(value or 0):
+                changed[key] = value
+            continue
+        if key == "nsfw":
+            if bool(getattr(channel, "nsfw", False)) != bool(value):
+                changed[key] = value
+            continue
+        if key in {"bitrate", "user_limit", "position", "default_auto_archive_duration", "default_thread_slowmode_delay"}:
+            if getattr(channel, key, None) != value:
+                changed[key] = value
+            continue
+        if key == "category":
+            current_category = getattr(channel, "category", None)
+            if getattr(current_category, "id", None) != getattr(value, "id", None):
+                changed[key] = value
+            continue
+        if key == "rtc_region":
+            if str(getattr(channel, "rtc_region", "") or "") != str(value or ""):
+                changed[key] = value
+            continue
+        if key == "video_quality_mode":
+            if getattr(channel, "video_quality_mode", None) != value:
+                changed[key] = value
+            continue
+        if key == "default_layout":
+            if getattr(channel, "default_layout", None) != value:
+                changed[key] = value
+            continue
+        if key == "default_sort_order":
+            if getattr(channel, "default_sort_order", None) != value:
+                changed[key] = value
+            continue
+        if key == "require_tag":
+            if getattr(channel, "require_tag", None) != value:
+                changed[key] = value
+            continue
+
+        changed[key] = value
+    return changed
+
+
+def _channel_name_update_cooldown_remaining(channel_id: int) -> float:
+    until = _CHANNEL_NAME_UPDATE_COOLDOWNS.get(channel_id, 0.0)
+    remaining = until - asyncio.get_running_loop().time()
+    if remaining <= 0:
+        _CHANNEL_NAME_UPDATE_COOLDOWNS.pop(channel_id, None)
+        return 0.0
+    return remaining
+
+
+def _mark_channel_name_update_cooldown(channel_id: int) -> None:
+    _CHANNEL_NAME_UPDATE_COOLDOWNS[channel_id] = (
+        asyncio.get_running_loop().time() + CHANNEL_NAME_UPDATE_COOLDOWN_SECONDS
+    )
 
 
 async def _channel_clone(context: ActionContext, args: dict[str, Any]) -> str:
@@ -3601,6 +4184,34 @@ def _resolve_thread(context: ActionContext, value: Any) -> discord.Thread | None
     return None
 
 
+def _resolve_channel_reference_field(
+    context: ActionContext,
+    field: str,
+    value: Any,
+) -> discord.abc.GuildChannel | discord.Thread | None:
+    if field == "category":
+        return _resolve_category(context, value)
+    if field == "forum":
+        return _resolve_forum_channel(context, value)
+    if field == "thread":
+        return _resolve_thread(context, value)
+    return _resolve_guild_channel(context, value)
+
+
+def _resolve_channel_reference_list(context: ActionContext, value: Any) -> Any:
+    if isinstance(value, list):
+        resolved: list[Any] = []
+        for item in value:
+            channel = _resolve_guild_channel(context, item)
+            resolved.append(_channel_mention(channel) if channel is not None else item)
+        return resolved
+
+    channel = _resolve_guild_channel(context, value)
+    if channel is not None:
+        return [_channel_mention(channel)]
+    return value
+
+
 async def _resolve_member(context: ActionContext, value: Any) -> discord.Member | None:
     text = str(value or "").strip()
     if text.casefold() in {"me", "self", "myself", "나", "내", "저", "본인"}:
@@ -3647,6 +4258,252 @@ def _voice_channel_members(guild: discord.Guild) -> list[discord.Member]:
     return members
 
 
+def _all_reference_channels(guild: discord.Guild) -> list[discord.abc.GuildChannel | discord.Thread]:
+    return [*guild.channels, *guild.threads]
+
+
+def _extract_channel_query_terms(text: str) -> list[str]:
+    raw_terms = re.findall(r"[0-9A-Za-z가-힣_.-]{2,64}", text)
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw_term in raw_terms:
+        term = raw_term.strip("@#_.,!?()[]{}<>\"'")
+        for suffix in (
+            "채널에서",
+            "채널로",
+            "채널을",
+            "채널이",
+            "채널은",
+            "채널",
+            "방에서",
+            "방으로",
+            "방을",
+            "방이",
+            "방은",
+            "방",
+            "으로",
+            "로",
+            "에서",
+            "의",
+            "을",
+            "를",
+            "이",
+            "가",
+            "은",
+            "는",
+        ):
+            if len(term) > len(suffix) + 1 and term.endswith(suffix):
+                term = term[: -len(suffix)]
+                break
+
+        normalized = _normalize_lookup_text(term)
+        if len(normalized) < 2 or normalized in seen:
+            continue
+        seen.add(normalized)
+        terms.append(term)
+    return terms
+
+
+def _score_channel_for_prompt(
+    channel: discord.abc.GuildChannel | discord.Thread,
+    prompt: str,
+    query_terms: list[str],
+) -> int:
+    name = str(getattr(channel, "name", "") or "")
+    if not name:
+        return 0
+
+    strict_name = _normalize_lookup_text(name)
+    loose_name = _normalize_loose_lookup_text(name)
+    normalized_prompt = _normalize_lookup_text(prompt)
+    loosely_normalized_prompt = _normalize_loose_lookup_text(prompt)
+    best_score = 0
+
+    if strict_name and strict_name in normalized_prompt:
+        best_score = max(best_score, 500 + min(len(strict_name), 80))
+    if loose_name and loose_name in loosely_normalized_prompt:
+        best_score = max(best_score, 450 + min(len(loose_name), 80))
+
+    for term in query_terms:
+        strict_term = _normalize_lookup_text(term)
+        loose_term = _normalize_loose_lookup_text(term)
+        if strict_term and strict_term == strict_name:
+            best_score = max(best_score, 800 + min(len(strict_name), 80))
+        elif loose_term and loose_term == loose_name:
+            best_score = max(best_score, 760 + min(len(loose_name), 80))
+        elif strict_term and strict_name and (strict_term in strict_name or strict_name in strict_term):
+            best_score = max(best_score, 300 + min(len(strict_name), len(strict_term), 80))
+        elif loose_term and loose_name and (loose_term in loose_name or loose_name in loose_term):
+            best_score = max(best_score, 260 + min(len(loose_name), len(loose_term), 80))
+
+    return best_score
+
+
+def _channel_reference_line(channel: discord.abc.GuildChannel | discord.Thread) -> str:
+    parts = [
+        f"id={channel.id}",
+        f"mention={_channel_mention(channel)}",
+        f"name={_single_line_field(str(getattr(channel, 'name', '')))}",
+        f"type={_channel_reference_type(channel)}",
+    ]
+    parent = getattr(channel, "parent", None) or getattr(channel, "category", None)
+    if parent is not None:
+        parts.append(f"parent_id={getattr(parent, 'id', '')}")
+        parts.append(f"parent_name={_single_line_field(str(getattr(parent, 'name', '')))}")
+    return "- " + ", ".join(parts)
+
+
+def _channel_mention(channel: discord.abc.GuildChannel | discord.Thread) -> str:
+    mention = getattr(channel, "mention", "")
+    return str(mention or f"<#{channel.id}>")
+
+
+def _channel_reference_type(channel: discord.abc.GuildChannel | discord.Thread) -> str:
+    if isinstance(channel, discord.Thread):
+        return "thread"
+    if isinstance(channel, discord.TextChannel):
+        return "text"
+    if isinstance(channel, discord.VoiceChannel):
+        return "voice"
+    if isinstance(channel, discord.StageChannel):
+        return "stage"
+    if isinstance(channel, discord.CategoryChannel):
+        return "category"
+    if isinstance(channel, discord.ForumChannel):
+        return "forum"
+    return str(getattr(channel, "type", type(channel).__name__))
+
+
+def _channel_sort_key(channel: discord.abc.GuildChannel | discord.Thread) -> tuple[int, int, str, int]:
+    position = int(getattr(channel, "position", 0) or 0)
+    parent = getattr(channel, "parent", None) or getattr(channel, "category", None)
+    parent_position = int(getattr(parent, "position", 0) or 0)
+    return (parent_position, position, str(getattr(channel, "name", "")).casefold(), channel.id)
+
+
+def _voice_member_reference_line(member: discord.Member) -> str:
+    voice = member.voice
+    voice_parts = [
+        f"id={member.id}",
+        f"mention={member.mention}",
+        f"display_name={_single_line_field(member.display_name)}",
+        f"username={_single_line_field(member.name)}",
+    ]
+    if member.global_name:
+        voice_parts.append(f"global_name={_single_line_field(member.global_name)}")
+    if member.nick:
+        voice_parts.append(f"nickname={_single_line_field(member.nick)}")
+    if voice is not None:
+        voice_parts.extend(
+            [
+                f"muted={voice.mute}",
+                f"self_muted={voice.self_mute}",
+                f"deafened={voice.deaf}",
+                f"self_deafened={voice.self_deaf}",
+            ]
+        )
+    return ", ".join(voice_parts)
+
+
+def _extract_member_query_terms(text: str) -> list[str]:
+    raw_terms = re.findall(r"[0-9A-Za-z가-힣_.-]{2,64}", text)
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw_term in raw_terms:
+        term = raw_term.strip("@#_.,!?()[]{}<>\"'")
+        for suffix in (
+            "에게서",
+            "한테서",
+            "에게",
+            "한테",
+            "님의",
+            "님을",
+            "님이",
+            "님은",
+            "님",
+            "으로",
+            "로",
+            "에서",
+            "의",
+            "을",
+            "를",
+            "이",
+            "가",
+            "은",
+            "는",
+        ):
+            if len(term) > len(suffix) + 1 and term.endswith(suffix):
+                term = term[: -len(suffix)]
+                break
+
+        normalized = _normalize_lookup_text(term)
+        if len(normalized) < 2 or normalized in seen:
+            continue
+        seen.add(normalized)
+        terms.append(term)
+    return terms
+
+
+def _score_member_for_prompt(member: discord.Member, prompt: str, query_terms: list[str]) -> int:
+    normalized_prompt = _normalize_lookup_text(prompt)
+    loosely_normalized_prompt = _normalize_loose_lookup_text(prompt)
+    names = [
+        (_normalize_lookup_text(name), _normalize_loose_lookup_text(name))
+        for name in _member_name_values(member)
+    ]
+    names = [(strict, loose) for strict, loose in names if strict or loose]
+    if not names:
+        return 0
+
+    best_score = 0
+    normalized_terms = [_normalize_lookup_text(term) for term in query_terms]
+    loosely_normalized_terms = [_normalize_loose_lookup_text(term) for term in query_terms]
+    for strict_name, loose_name in names:
+        if strict_name and strict_name in normalized_prompt:
+            best_score = max(best_score, 500 + min(len(strict_name), 80))
+        if loose_name and loose_name in loosely_normalized_prompt:
+            best_score = max(best_score, 450 + min(len(loose_name), 80))
+        for term, loose_term in zip(normalized_terms, loosely_normalized_terms):
+            if not term and not loose_term:
+                continue
+            if term and term == strict_name:
+                best_score = max(best_score, 800 + min(len(strict_name), 80))
+            elif loose_term and loose_term == loose_name:
+                best_score = max(best_score, 760 + min(len(loose_name), 80))
+            elif term and strict_name and (term in strict_name or strict_name in term):
+                best_score = max(best_score, 300 + min(len(strict_name), len(term), 80))
+            elif loose_term and loose_name and (loose_term in loose_name or loose_name in loose_term):
+                best_score = max(best_score, 260 + min(len(loose_name), len(loose_term), 80))
+    return best_score
+
+
+def _member_name_values(member: discord.Member) -> list[str]:
+    values = [
+        member.display_name,
+        member.name,
+        member.global_name or "",
+        member.nick or "",
+        str(member),
+    ]
+    return [value for value in values if value]
+
+
+def _member_reference_labels(member: discord.Member) -> str:
+    parts = [
+        f"display_name={_single_line_field(member.display_name)}",
+        f"username={_single_line_field(member.name)}",
+    ]
+    if member.global_name:
+        parts.append(f"global_name={_single_line_field(member.global_name)}")
+    if member.nick:
+        parts.append(f"nickname={_single_line_field(member.nick)}")
+    return ", ".join(parts)
+
+
+def _single_line_field(value: str) -> str:
+    return " ".join(str(value).split())[:80]
+
+
 def _find_member_by_name(members: list[discord.Member] | tuple[discord.Member, ...], query: str) -> discord.Member | None:
     normalized_query = _normalize_lookup_text(query)
     if not normalized_query:
@@ -3677,6 +4534,10 @@ def _find_member_by_name(members: list[discord.Member] | tuple[discord.Member, .
 
 def _normalize_lookup_text(value: str) -> str:
     return re.sub(r"\s+", "", value.strip().casefold())
+
+
+def _normalize_loose_lookup_text(value: str) -> str:
+    return re.sub(r"[^0-9a-z가-힣]+", "", value.strip().casefold())
 
 
 def _resolve_role(context: ActionContext, value: Any) -> discord.Role | None:
