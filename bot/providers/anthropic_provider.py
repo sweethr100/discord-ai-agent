@@ -40,6 +40,8 @@ class AnthropicProvider(HttpProvider):
             payload["system"] = system_prompt
         if options.temperature is not None:
             payload["temperature"] = options.temperature
+        if options.reasoning_effort is not None:
+            payload["output_config"] = {"effort": options.reasoning_effort}
 
         data = await self._post_json(
             url=f"{self.base_url}/messages",

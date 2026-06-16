@@ -35,6 +35,8 @@ class LocalProvider(HttpProvider):
             payload["temperature"] = options.temperature
         if options.max_tokens is not None:
             payload["max_tokens"] = options.max_tokens
+        if options.reasoning_effort is not None:
+            payload["reasoning_effort"] = options.reasoning_effort
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:

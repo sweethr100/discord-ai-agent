@@ -222,21 +222,23 @@ def build_system_prompt(
     style: str,
     custom_prompt: str = "",
     style_prompt: str | None = None,
+    include_self_manual: bool = True,
 ) -> str:
     base_prompt = (base_prompt or "").strip()
 
     if style_prompt is not None:
         prompt = style_prompt.strip()
-        return _join_system_prompt(base_prompt, CONCISE_RESPONSE_GUIDE, prompt)
+        return _join_system_prompt(base_prompt, CONCISE_RESPONSE_GUIDE, prompt, include_self_manual=include_self_manual)
 
     style = resolve_style_name(style)
 
     preset = STYLE_PRESETS[style]
-    return _join_system_prompt(base_prompt, CONCISE_RESPONSE_GUIDE, preset.prompt)
+    return _join_system_prompt(base_prompt, CONCISE_RESPONSE_GUIDE, preset.prompt, include_self_manual=include_self_manual)
 
 
-def _join_system_prompt(*parts: str) -> str:
-    return append_self_manual("\n\n".join(part.strip() for part in parts if part and part.strip()))
+def _join_system_prompt(*parts: str, include_self_manual: bool = True) -> str:
+    prompt = "\n\n".join(part.strip() for part in parts if part and part.strip())
+    return append_self_manual(prompt) if include_self_manual else prompt
 
 
 def format_style_presets(

@@ -404,6 +404,33 @@ AI_MAX_TOKENS=4096
 
 Claude/Anthropic은 API가 `max_tokens` 값을 필수로 요구하므로, `AI_MAX_TOKENS`가 비어 있으면 내부 호환값을 사용합니다. Discord 메시지 2000자 제한은 봇이 자동으로 여러 메시지로 나누어 전송합니다.
 
+## 추론 깊이 설정
+
+Provider별 추론 깊이 설정은 각각 따로 읽습니다. 비워두면 요청에 포함하지 않습니다.
+
+```env
+OPENAI_REASONING_EFFORT=
+GEMINI_REASONING_EFFORT=
+ANTHROPIC_REASONING_EFFORT=
+LOCAL_REASONING_EFFORT=
+```
+
+OpenAI, Gemini, local은 `minimal`, `low`, `medium`, `high` 중 하나를 넣으세요.
+
+```env
+OPENAI_REASONING_EFFORT=low
+GEMINI_REASONING_EFFORT=low
+LOCAL_REASONING_EFFORT=low
+```
+
+Anthropic은 Claude API의 effort 값인 `low`, `medium`, `high`, `xhigh`, `max` 중 하나를 넣으세요.
+
+```env
+ANTHROPIC_REASONING_EFFORT=medium
+```
+
+사용 중인 모델이 이 옵션을 지원하지 않아 API 오류가 나면 값을 다시 비우면 됩니다.
+
 ## 확장 포인트
 
 - provider 추가: `bot/providers/base.py`의 `AIProvider` 인터페이스를 구현하고 `bot/providers/__init__.py`의 `create_provider`에 연결합니다.

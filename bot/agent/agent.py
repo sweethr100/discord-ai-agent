@@ -13,12 +13,14 @@ class AIAgent:
         system_prompt: str,
         temperature: float,
         max_tokens: int | None,
+        reasoning_effort: str | None = None,
         tools: ToolRegistry | None = None,
     ) -> None:
         self.provider = provider
         self.system_prompt = system_prompt
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.reasoning_effort = reasoning_effort
         self.tools = tools or ToolRegistry()
 
     async def run(
@@ -42,6 +44,7 @@ class AIAgent:
         options = ProviderOptions(
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            reasoning_effort=self.reasoning_effort,
         )
         return await self.provider.generate_response(messages, options)
 

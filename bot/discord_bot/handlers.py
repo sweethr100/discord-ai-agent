@@ -69,6 +69,39 @@ QUESTION_HINTS = (
     "할까",
     "가능",
 )
+SELF_MANUAL_ALWAYS_HINTS = (
+    "명령어",
+    "사용법",
+    "설정법",
+    "실행법",
+    "기능",
+    ".env",
+    "env",
+)
+SELF_MANUAL_TOPIC_HINTS = (
+    "자동응답",
+    "자동 응답",
+    "오토채널",
+    "autochannel",
+    "스타일",
+    "style",
+    "provider",
+    "프로바이더",
+    "모델",
+)
+SELF_MANUAL_QUESTION_HINTS = (
+    "?",
+    "뭐",
+    "무엇",
+    "어떻게",
+    "알려",
+    "설명",
+    "설정",
+    "사용",
+    "뭐 할 수",
+    "할 수 있어",
+    "가능해",
+)
 CONFIRMATION_TIMEOUT_SECONDS = 60.0
 FEEDBACK_GENERATION_ATTEMPTS = 2
 ACTION_VALIDATION_REPLAN_ATTEMPTS = 2
@@ -85,6 +118,16 @@ class PendingAutoChannelRequest:
 
 
 _pending_autochannel_requests: dict[tuple[int, int, int], PendingAutoChannelRequest] = {}
+
+
+def _should_include_self_manual(prompt: str) -> bool:
+    normalized = prompt.casefold()
+    if any(hint in normalized for hint in SELF_MANUAL_ALWAYS_HINTS):
+        return True
+    return (
+        any(topic in normalized for topic in SELF_MANUAL_TOPIC_HINTS)
+        and any(hint in normalized for hint in SELF_MANUAL_QUESTION_HINTS)
+    )
 
 
 async def handle_ai_request(
@@ -129,6 +172,7 @@ async def handle_ai_request(
             style=effective_style,
             custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
             style_prompt=custom_style.prompt if custom_style else None,
+            include_self_manual=_should_include_self_manual(prompt),
         )
         channel_context = await build_channel_context(
             interaction=interaction,
@@ -553,7 +597,11 @@ async def _generate_feedback_response(
         try:
             return await bot.agent.provider.generate_response(
                 retry_messages,
-                ProviderOptions(temperature=bot.agent.temperature, max_tokens=bot.agent.max_tokens),
+                ProviderOptions(
+                    temperature=bot.agent.temperature,
+                    max_tokens=bot.agent.max_tokens,
+                    reasoning_effort=bot.agent.reasoning_effort,
+                ),
             )
         except ProviderResponseError as exc:
             last_error = exc

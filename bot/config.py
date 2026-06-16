@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 
 
 SUPPORTED_PROVIDERS = {"openai", "gemini", "anthropic", "local"}
+ANTHROPIC_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+STANDARD_REASONING_EFFORTS = {"minimal", "low", "medium", "high"}
 
 
 class ConfigError(ValueError):
@@ -49,13 +51,26 @@ class AppConfig:
     request_timeout_seconds: float
     openai_api_key: str
     openai_model: str
+    openai_reasoning_effort: str | None
     gemini_api_key: str
     gemini_model: str
+    gemini_reasoning_effort: str | None
     anthropic_api_key: str
     anthropic_model: str
+    anthropic_reasoning_effort: str | None
     local_base_url: str
     local_model: str
     local_api_key: str
+    local_reasoning_effort: str | None
+
+    @property
+    def ai_reasoning_effort(self) -> str | None:
+        return {
+            "openai": self.openai_reasoning_effort,
+            "gemini": self.gemini_reasoning_effort,
+            "anthropic": self.anthropic_reasoning_effort,
+            "local": self.local_reasoning_effort,
+        }.get(self.ai_provider)
 
     def validate(self) -> None:
         if not self.discord_token:
@@ -69,6 +84,27 @@ class AppConfig:
 
         if self.ai_max_tokens is not None and self.ai_max_tokens <= 0:
             raise ConfigError("AI_MAX_TOKENS 값은 1 이상이어야 합니다.")
+
+        _validate_reasoning_effort(
+            "OPENAI_REASONING_EFFORT",
+            self.openai_reasoning_effort,
+            STANDARD_REASONING_EFFORTS,
+        )
+        _validate_reasoning_effort(
+            "GEMINI_REASONING_EFFORT",
+            self.gemini_reasoning_effort,
+            STANDARD_REASONING_EFFORTS,
+        )
+        _validate_reasoning_effort(
+            "ANTHROPIC_REASONING_EFFORT",
+            self.anthropic_reasoning_effort,
+            ANTHROPIC_REASONING_EFFORTS,
+        )
+        _validate_reasoning_effort(
+            "LOCAL_REASONING_EFFORT",
+            self.local_reasoning_effort,
+            STANDARD_REASONING_EFFORTS,
+        )
 
         if self.channel_context_messages < 0:
             raise ConfigError("CHANNEL_CONTEXT_MESSAGES 값은 0 이상이어야 합니다.")
@@ -121,13 +157,30 @@ def load_config() -> AppConfig:
         request_timeout_seconds=_get_float("REQUEST_TIMEOUT_SECONDS", 60.0),
         openai_api_key=_get_env("OPENAI_API_KEY"),
         openai_model=_get_env("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_reasoning_effort=_get_env("OPENAI_REASONING_EFFORT").lower() or None,
         gemini_api_key=_get_env("GEMINI_API_KEY"),
         gemini_model=_get_env("GEMINI_MODEL", "gemini-1.5-flash"),
+        gemini_reasoning_effort=_get_env("GEMINI_REASONING_EFFORT").lower() or None,
         anthropic_api_key=_get_env("ANTHROPIC_API_KEY"),
         anthropic_model=_get_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
+        anthropic_reasoning_effort=_get_env("ANTHROPIC_REASONING_EFFORT").lower() or None,
         local_base_url=_get_env("LOCAL_BASE_URL", "http://localhost:11434/v1").rstrip("/"),
         local_model=_get_env("LOCAL_MODEL", "llama3.1"),
         local_api_key=_get_env("LOCAL_API_KEY"),
+        local_reasoning_effort=_get_env("LOCAL_REASONING_EFFORT").lower() or None,
     )
     config.validate()
     return config
+
+
+def _validate_reasoning_effort(
+    name: str,
+    value: str | None,
+    allowed_values: set[str],
+) -> None:
+    if value is None:
+        return
+
+    if value not in allowed_values:
+        supported = ", ".join(sorted(allowed_values))
+        raise ConfigError(f"{name} 값은 {supported} 중 하나여야 합니다. 현재 값: {value!r}")

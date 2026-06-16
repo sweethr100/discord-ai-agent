@@ -29,6 +29,7 @@ async def async_main() -> None:
         system_prompt="",
         temperature=config.ai_temperature,
         max_tokens=config.ai_max_tokens,
+        reasoning_effort=config.ai_reasoning_effort,
     )
     bot = DiscordAIBot(config=config, agent=agent)
 

@@ -32,6 +32,10 @@ class GeminiProvider(HttpProvider):
             generation_config["temperature"] = options.temperature
         if options.max_tokens is not None:
             generation_config["maxOutputTokens"] = options.max_tokens
+        if options.reasoning_effort is not None:
+            generation_config["thinkingConfig"] = {
+                "thinkingLevel": options.reasoning_effort,
+            }
 
         payload: dict[str, Any] = {"contents": contents}
         if system_prompt:

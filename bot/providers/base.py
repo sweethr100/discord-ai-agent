@@ -15,6 +15,7 @@ Message = dict[str, str]
 class ProviderOptions:
     temperature: float | None = None
     max_tokens: int | None = None
+    reasoning_effort: str | None = None
 
 
 class ProviderError(RuntimeError):

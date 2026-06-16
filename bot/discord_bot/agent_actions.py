@@ -19,206 +19,113 @@ if TYPE_CHECKING:
     from discord_bot.client import DiscordAIBot
 
 
-ACTION_PLANNER_PROMPT = """\
-너는 Discord AI Agent Bot의 서버 관리 도구 호출 컨트롤러다.
-사용자 메시지가 봇 자체 설정 또는 Discord 서버 관리 실행 요청이면 실행할 도구 호출을 JSON으로 요청하라.
-일반 질문, 설명 요청, 잡담, 코딩 질문이면 {"action":"none","args":{}}를 출력하라.
-반드시 JSON 객체 하나만 출력하라. 설명 문장, Markdown, 코드블록은 출력하지 마라.
+TOOL_ACTIONS_PROMPT = """\
+사용 가능한 도구(action: args):
+- autochannel_add: channel, mode, keywords; autochannel_remove: channel; autochannel_list:
+- style_set: style; style_show:; style_presets:; style_add: name, description, prompt; style_modify: name, description, prompt; style_remove: name; style_channel: channel, style
+- channel_create: type, name, category, topic, slowmode, nsfw, bitrate, user_limit, position, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
+- channel_update: channel, name, topic, slowmode, nsfw, bitrate, user_limit, category, position, sync_permissions, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
+- channel_delete: channel; channel_clone: channel, name, category; channel_follow: source_channel, destination_channel; channel_pins_list: channel, limit; channel_permission_set: channel, target, permissions, clear
+- role_create: name, color, secondary_color, tertiary_color, mentionable, hoist, icon_url, unicode_emoji; role_update: role, name, color, secondary_color, tertiary_color, mentionable, hoist, position, icon_url, unicode_emoji
+- role_permissions_update: role, allow, deny; role_delete: role; role_add: member, role; role_remove: member, role
+- emoji_create: name, url; emoji_update: emoji, name; emoji_delete: emoji
+- sticker_create: name, description, emoji, url; sticker_update: sticker, name, description, emoji; sticker_delete: sticker
+- sound_create: name, url, volume, emoji; sound_update: sound, name, volume, emoji; sound_delete: sound
+- webhook_create: channel, name, avatar_url; webhook_list: channel; webhook_delete: webhook
+- invite_create: channel, max_age, max_uses, temporary; invite_list: channel; invite_delete: invite; audit_log_show: limit
+- guild_update: name, description, icon_url, banner_url, splash_url, system_channel, rules_channel, public_updates_channel, preferred_locale, premium_progress_bar_enabled, invites_disabled
+- template_create: name, description; template_list:; template_sync: template; template_delete: template
+- automod_rule_create: name, keywords, regex_patterns, allow_list, exempt_roles, exempt_channels, enabled, custom_message; automod_rule_list:; automod_rule_update: rule, name, keywords, regex_patterns, allow_list, exempt_roles, exempt_channels, enabled, custom_message; automod_rule_delete: rule
+- member_prune: days, roles; member_kick: member, reason; member_ban: member, reason, delete_message_days; member_unban: user, reason
+- member_timeout: member, duration_minutes, reason; member_timeout_duration_needed: member; member_nickname: member, nickname
+- member_move_voice: member, channel; member_mute_voice: member, muted; member_deafen_voice: member, deafened; member_disconnect_voice: member
+- message_purge: channel, limit; message_pin: channel, message_id; message_unpin: channel, message_id
+- thread_create: channel, name; thread_update: thread, name, archived, locked, slowmode; thread_delete: thread
+- forum_tag_create: forum, name, emoji, moderated; forum_tag_list: forum; forum_tag_update: forum, tag, name, emoji, moderated; forum_tag_delete: forum, tag
+- event_create: name, start_time, end_time, description, channel, location; event_update: event, name, start_time, end_time, description, channel, location; event_cancel: event; event_delete: event
+- welcome_screen_update: enabled, description, channels; widget_update: enabled, channel; onboarding_update: enabled, default_channels
+- integration_list:; integration_delete: integration; ban_list: limit; bulk_ban: users, reason, delete_message_days; vanity_invite_show:
+- none:
+"""
 
-출력 형식:
+TOOL_RULES_PROMPT = """\
+도구 선택 규칙:
+- 실행 요청이면 JSON만 출력한다. 일반 질문/설명/잡담/코딩/글쓰기는 도구를 쓰지 않는다.
+- 설명을 묻는 "가능해?", "할 수 있어?", "명령어 알려줘", "설정법 알려줘"는 답변/none이다.
+- 지원 도구로 가능한 실행 요청은 "할 수 없다", "직접 해야 한다"고 답하지 말고 도구 JSON을 출력한다.
+- 실행 가능 여부를 미리 추측하지 않는다. 실제 성공/실패는 실행/검증 결과가 판단한다.
+- 여러 작업은 actions 배열로 모두 출력한다. "모든/전부/다/전체"는 가능한 경우 대상별 actions로 펼친다.
+- 삭제/차단/추방/대량 삭제 같은 파괴 작업은 현재 요청에 명확한 실행 의도가 있을 때만 고른다.
+- 최근 대화는 생략된 대상/기간/채널/역할 보충에만 쓴다. 과거 메시지만으로 새 작업을 실행하지 않는다.
+- "120분 해줘", "해제해줘", "그렇게 해줘"처럼 직전 관리 요청 보충이면 최근 문맥과 합쳐 처리한다.
+
+대상 해석:
+- member는 멤버 목록에 있으면 반드시 id 문자열을 쓴다. "나/내/저/본인/me"는 현재 요청자 id다. 없는 ID는 추측하지 말고 사용자가 말한 이름 문자열을 쓴다.
+- channel/source_channel/destination_channel/category/forum/thread 및 채널 배열은 목록에 있으면 mention 문자열(<#id>)을 쓴다. 없는 ID는 추측하지 말고 이름 문자열을 쓴다.
+- mention/ID가 입력에 직접 있으면 그대로 쓴다. 예: <#123>, <@456>, <@&789>.
+- 멘션은 코드블록/백틱 안에 넣지 않는다. `<@id>`, `<#id>` 그대로 써야 Discord가 멘션으로 인식한다.
+- 음성 채널 접속자 목록이 있고 특정 음성/스테이지 채널의 전체 유저 대상 요청이면 listed members 각각으로 actions를 만든다. 접속자가 없으면 none.content로 짧게 알린다.
+
+자주 쓰는 매핑:
+- 통방/음성방/보이스/VC = 음성 채널. "내보내/연결 끊어/보이스 끊어" = member_disconnect_voice.
+- 마이크 음소거/마이크 꺼/뮤트 = member_mute_voice muted=true. 해제/풀어 = false.
+- 헤드셋 음소거/소리 못 듣게/deafen = member_deafen_voice deafened=true. 해제/듣게 = false.
+- 타임아웃 해제/제거/풀어/취소/없애 = member_timeout duration_minutes=0.
+- 별명 되돌려/초기화/없애 = member_nickname nickname=null.
+
+값 규칙:
+- 채널 생성 type 기본값은 text. type: text, voice, stage, category, forum, media.
+- mode: always, question_only, keyword. style: default, classic, efficient, study, grok, spicy, kids 또는 서버 커스텀 스타일.
+- bool/null 필드: nsfw, mentionable, hoist, temporary, muted, deafened, archived, locked.
+- 정수 필드: slowmode, position, bitrate, user_limit, default_auto_archive_duration, default_thread_slowmode.
+- video_quality_mode: auto/full. default_layout: not_set/list_view/gallery_view. default_sort_order: latest_activity/creation_date.
+- time은 가능하면 ISO 8601. permission 이름은 send_messages, view_channel 같은 Discord permission 문자열 배열.
+- 채널 이름은 사용자가 말한 철자/문자를 그대로 name에 넣는다. 한글/영문/숫자/기호를 임의 변환하지 않는다.
+- 첨부파일로 emoji/sticker/sound 생성 요청이면 url을 비워도 된다.
+"""
+
+TOOL_JSON_FORMAT_PROMPT = """\
+도구 JSON 형식:
 {"action":"도구_이름","args":{"필요한_인자":"값"}}
+{"actions":[{"action":"도구_이름","args":{}},{"action":"도구_이름","args":{}}]}
+"""
 
-여러 작업 출력 형식:
-{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}]}
-
+TOOL_EXAMPLES_PROMPT = """\
 예시:
 사용자: 찐코 통방에서 연결 끊어달라고
 출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"}}
-
 사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
 출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}]}
-
 사용자: 음성1에 들어간 모든 유저의 마이크 음소거 해줘
 출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}]}
-
-사용자: 리건 타임아웃 풀어줘
-출력: {"action":"member_timeout","args":{"member":"123456789012345678","duration_minutes":0}}
-
-지원 도구 action:
-- autochannel_add: args channel, mode, keywords
-- autochannel_remove: args channel
-- autochannel_list: args
-- style_set: args style
-- style_show: args
-- style_presets: args
-- style_add: args name, description, prompt
-- style_modify: args name, description, prompt
-- style_remove: args name
-- style_channel: args channel, style
-- channel_create: args type, name, category, topic, slowmode, nsfw, bitrate, user_limit, position, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
-- channel_update: args channel, name, topic, slowmode, nsfw, bitrate, user_limit, category, position, sync_permissions, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
-- channel_delete: args channel
-- channel_clone: args channel, name, category
-- channel_follow: args source_channel, destination_channel
-- channel_pins_list: args channel, limit
-- channel_permission_set: args channel, target, permissions, clear
-- role_create: args name, color, secondary_color, tertiary_color, mentionable, hoist, icon_url, unicode_emoji
-- role_update: args role, name, color, secondary_color, tertiary_color, mentionable, hoist, position, icon_url, unicode_emoji
-- role_permissions_update: args role, allow, deny
-- role_delete: args role
-- role_add: args member, role
-- role_remove: args member, role
-- emoji_create: args name, url
-- emoji_update: args emoji, name
-- emoji_delete: args emoji
-- sticker_create: args name, description, emoji, url
-- sticker_update: args sticker, name, description, emoji
-- sticker_delete: args sticker
-- sound_create: args name, url, volume, emoji
-- sound_update: args sound, name, volume, emoji
-- sound_delete: args sound
-- webhook_create: args channel, name, avatar_url
-- webhook_list: args channel
-- webhook_delete: args webhook
-- invite_create: args channel, max_age, max_uses, temporary
-- invite_list: args channel
-- invite_delete: args invite
-- audit_log_show: args limit
-- guild_update: args name, description, icon_url, banner_url, splash_url, system_channel, rules_channel, public_updates_channel, preferred_locale, premium_progress_bar_enabled, invites_disabled
-- template_create: args name, description
-- template_list: args
-- template_sync: args template
-- template_delete: args template
-- automod_rule_create: args name, keywords, regex_patterns, allow_list, exempt_roles, exempt_channels, enabled, custom_message
-- automod_rule_list: args
-- automod_rule_update: args rule, name, keywords, regex_patterns, allow_list, exempt_roles, exempt_channels, enabled, custom_message
-- automod_rule_delete: args rule
-- member_prune: args days, roles
-- member_kick: args member, reason
-- member_ban: args member, reason, delete_message_days
-- member_unban: args user, reason
-- member_timeout: args member, duration_minutes, reason
-- member_timeout_duration_needed: args member
-- member_nickname: args member, nickname
-- member_move_voice: args member, channel
-- member_mute_voice: args member, muted
-- member_deafen_voice: args member, deafened
-- member_disconnect_voice: args member
-- message_purge: args channel, limit
-- message_pin: args channel, message_id
-- message_unpin: args channel, message_id
-- thread_create: args channel, name
-- thread_update: args thread, name, archived, locked, slowmode
-- thread_delete: args thread
-- forum_tag_create: args forum, name, emoji, moderated
-- forum_tag_list: args forum
-- forum_tag_update: args forum, tag, name, emoji, moderated
-- forum_tag_delete: args forum, tag
-- event_create: args name, start_time, end_time, description, channel, location
-- event_update: args event, name, start_time, end_time, description, channel, location
-- event_cancel: args event
-- event_delete: args event
-- welcome_screen_update: args enabled, description, channels
-- widget_update: args enabled, channel
-- onboarding_update: args enabled, default_channels
-- integration_list: args
-- integration_delete: args integration
-- ban_list: args limit
-- bulk_ban: args users, reason, delete_message_days
-- vanity_invite_show: args
-- none: args
-
-규칙:
-- 실행 요청이 명확할 때만 도구 action을 선택하라.
-- 사용자가 한 문장에 여러 서버 관리 작업을 요청하면 actions 배열로 여러 도구 호출을 순서대로 출력하라.
-- 사용자가 "모든", "전부", "다", "전체"처럼 여러 대상을 한 번에 지정하면 가능한 경우 actions 배열로 대상별 도구 호출을 모두 출력하라.
-- "설정법 알려줘", "명령어 뭐야", "할 수 있어?" 같은 설명 요청은 none이다.
-- 삭제, 차단, 추방, 대량 삭제 같은 파괴적 작업은 사용자가 명확히 실행을 요청한 경우에만 선택하라.
-- "통방", "음성방", "보이스", "VC"는 음성 채널을 뜻할 수 있다.
-- "<멤버> 통방에서 연결 끊어", "<멤버> 음성방에서 내보내", "<멤버> 보이스 끊어달라고" 같은 요청은 member_disconnect_voice 실행 요청이다.
-- "마이크 음소거", "마이크 꺼", "뮤트"는 member_mute_voice의 muted=true 실행 요청이다.
-- "마이크 음소거 해제", "뮤트 해제"는 member_mute_voice의 muted=false 실행 요청이다.
-- "헤드셋 음소거", "소리 못 듣게", "데afen"은 member_deafen_voice의 deafened=true 실행 요청이다.
-- "헤드셋 음소거 해제", "소리 듣게"는 member_deafen_voice의 deafened=false 실행 요청이다.
-- 지원 도구로 가능한 서버 관리 작업을 "할 수 없다", "직접 해야 한다", "원격으로 개입할 수 없다"고 자연어로 답하지 말고 도구 호출 JSON을 출력하라.
-- 최근 채널 대화 문맥은 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라.
-- 현재 요청이 "120분 해줘", "해제해줘", "그렇게 해줘"처럼 이전 서버 관리 요청의 누락 정보를 보충하는 말이면, 최근 문맥의 해당 요청과 합쳐 하나의 도구 action을 선택하라.
-- 과거 메시지만으로 새 작업을 실행하지 마라. 반드시 현재 요청에 실행 의도가 있어야 한다.
-- member_timeout에 대상은 있지만 duration_minutes가 없고 해제 요청도 아니면 member_timeout_duration_needed를 선택하라.
-- "타임아웃 해제", "타임아웃 제거", "타임아웃 풀어", "타임아웃 취소", "타임아웃 없애"는 member_timeout의 duration_minutes를 0으로 넣어라.
-- channel/member/role/thread/forum/emoji/sticker/sound/event/webhook/integration은 Discord mention 또는 ID가 있으면 그대로 넣어라. 예: <#123>, <@456>, <@&789>.
-- 아래 입력에 "현재 요청자" 또는 "멤버 목록"이 제공되고 대상 멤버가 그 안에 있으면 member 값은 반드시 해당 id 문자열을 사용하라.
-- 사용자가 "나", "내", "저", "본인", "me"를 대상 멤버로 말하면 현재 요청자의 id를 member 값으로 넣어라.
-- 멤버 목록에 없는 멤버 ID를 추측하거나 만들어내지 마라. 목록에서 찾지 못한 경우에만 사용자가 말한 별명, 표시 이름, 유저명을 문자열 그대로 넣어라.
-- 아래 입력에 "음성 채널 접속자 목록"이 제공되고 사용자가 특정 음성/스테이지 채널의 모든 유저에게 작업을 요청하면, 해당 채널의 listed members 각각을 대상으로 actions 배열을 출력하라.
-- 음성 채널의 모든 유저에게 member_mute_voice/member_deafen_voice/member_disconnect_voice/member_move_voice 같은 멤버별 음성 작업을 적용할 수 있다. "단일 기능만 구현되어 있다"고 말하지 마라.
-- 음성 채널 접속자 목록에 대상 채널은 있지만 접속자가 없으면 {"action":"none","args":{"content":"해당 음성 채널에 접속 중인 멤버가 없다고 짧게 알리는 문장"}}를 출력하라.
-- "별명 되돌려", "별명 초기화", "별명 없애"는 member_nickname의 nickname을 null로 넣어라.
-- 아래 입력에 "현재 채널" 또는 "채널 목록"이 제공되고 대상 채널이 그 안에 있으면 channel/source_channel/destination_channel/category/forum/thread 값은 반드시 해당 mention 문자열(<#id>)을 사용하라.
-- channels/default_channels처럼 채널 배열을 받는 인자도 목록에 있는 채널은 mention 문자열(<#id>) 배열로 넣어라.
-- 사용자가 현재 채널을 뜻하면 현재 채널의 mention이 제공된 경우 그 mention을 넣고, 제공되지 않은 경우에만 channel을 "current"로 넣어라.
-- 채널 목록에 없는 채널 ID를 추측하거나 만들어내지 마라. 목록에서 찾지 못한 경우에만 사용자가 말한 채널 이름을 문자열 그대로 넣어라.
-- 사용자가 만들 채널 이름을 말하면 철자와 문자를 그대로 name에 넣어라. 한글/영문/숫자/기호를 임의로 바꾸거나 바이트 토큰으로 쓰지 마라.
-- 사용자가 채널 종류를 따로 말하지 않고 "채널 만들어줘"라고 하면 type은 text로 넣어라.
-- type은 text, voice, stage, category, forum, media 중 하나만 사용하라.
-- mode는 always, question_only, keyword 중 하나만 사용하라.
-- style은 기본 스타일(default, classic, efficient, study, grok, spicy, kids) 또는 서버에 추가된 스타일 이름을 사용하라.
-- style_add/style_modify의 name은 영어 소문자, 숫자, _, - 로 된 1~32자 이름이다.
-- slowmode는 초 단위 정수다.
-- position, bitrate, user_limit, default_auto_archive_duration, default_thread_slowmode는 정수다.
-- video_quality_mode는 auto 또는 full 중 하나다.
-- default_layout은 not_set, list_view, gallery_view 중 하나다.
-- default_sort_order는 latest_activity 또는 creation_date 중 하나다.
-- nsfw, mentionable, hoist, temporary, muted, deafened, archived, locked는 true/false/null 중 하나다.
-- start_time/end_time은 가능하면 ISO 8601 형식으로 넣어라.
-- 파일이 필요한 emoji/sticker/sound 생성은 첨부파일을 사용한다고 판단되면 url을 비워도 된다.
-- permissions, allow, deny는 Discord permission 이름 배열이다. 예: ["send_messages", "view_channel"].
-- channel_permission_set의 target은 역할 또는 멤버다. clear가 true면 해당 target의 채널 권한 덮어쓰기를 제거한다.
-- keywords는 배열이다.
-- welcome_screen_update의 channels와 onboarding_update의 default_channels는 채널 mention/ID/name 배열이다.
-- bulk_ban의 users는 사용자 mention/ID 배열이다.
-"""
-
-AGENT_TOOL_PROMPT = """\
-너는 Discord 안에서 자연어 답변과 서버 관리 도구 호출을 모두 처리하는 AI 에이전트다.
-
-응답 선택 규칙:
-- 일반 질문, 설명 요청, 잡담, 글쓰기, 코딩 요청이면 평소처럼 자연어로 답하라.
-- 사용자가 서버 관리 작업이나 봇 설정 변경을 실행해 달라고 요청하면 자연어로 답하지 말고 도구 호출 JSON 객체 하나만 출력하라.
-- 도구 호출 JSON을 출력할 때는 설명 문장, Markdown, 코드블록을 함께 쓰지 마라.
-- 지원 도구로 가능한 작업을 "할 수 없다", "직접 해야 한다", "원격으로 개입할 수 없다"고 자연어로 답하지 마라. 반드시 도구 호출 JSON을 출력하라.
-- "가능해?", "할 수 있어?", "명령어 알려줘", "설정법 알려줘"처럼 실행이 아니라 설명을 묻는 요청이면 자연어로 답하라.
-
-도구 호출 형식:
-{"action":"도구_이름","args":{"필요한_인자":"값"}}
-
-여러 작업 도구 호출 형식:
-{"actions":[{"action":"도구_이름","args":{"필요한_인자":"값"}},{"action":"도구_이름","args":{"필요한_인자":"값"}}]}
-
-도구 호출 예시:
-사용자: 찐코 통방에서 연결 끊어달라고
-출력: {"action":"member_disconnect_voice","args":{"member":"123456789012345678"}}
-
-사용자: 리건한테 관리자 역할 줘
-출력: {"action":"role_add","args":{"member":"123456789012345678","role":"관리자"}}
-
-사용자: 내 별명 되돌려놔
-출력: {"action":"member_nickname","args":{"member":"123456789012345678","nickname":null}}
-
-사용자: 내 별명을 BSTD로 바꾸고, bepl_0505의 별명을 브론즈베플로 바꿔줘
-출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}]}
-
-사용자: 음성1에 들어간 모든 유저의 마이크 음소거 해줘
-출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}]}
-
-사용자: 리건 타임아웃 풀어줘
-출력: {"action":"member_timeout","args":{"member":"123456789012345678","duration_minutes":0}}
-
 사용자: 음성방에서 사람 내보낼 수 있어?
 출력: 음성 채널 멤버 연결 끊기 같은 서버 관리 작업을 도울 수 있어요. 실행하려면 대상 멤버를 말해 주세요.
+"""
 
-사용 가능한 도구와 규칙:
-""" + ACTION_PLANNER_PROMPT.split("지원 도구 action:", 1)[1]
+ACTION_PLANNER_PROMPT = f"""\
+너는 Discord AI Agent Bot의 도구 호출 플래너다.
+반드시 JSON 객체 하나만 출력한다. 설명, Markdown, 코드블록은 금지다.
+실행 요청이면 도구 JSON을 출력하고, 일반/설명/잡담이면 {{"action":"none","args":{{}}}}를 출력한다.
+
+{TOOL_JSON_FORMAT_PROMPT}
+{TOOL_EXAMPLES_PROMPT}
+{TOOL_ACTIONS_PROMPT}
+{TOOL_RULES_PROMPT}
+"""
+
+AGENT_TOOL_PROMPT = f"""\
+너는 Discord 안에서 자연어 답변과 서버 관리 도구 호출을 모두 처리하는 AI 에이전트다.
+
+응답 선택:
+- 일반 질문/설명/잡담/글쓰기/코딩 요청이면 자연어로 답한다.
+- 서버 관리나 봇 설정 변경 실행 요청이면 자연어 없이 도구 JSON 객체 하나만 출력한다.
+- 도구 JSON에는 설명, Markdown, 코드블록을 섞지 않는다.
+
+{TOOL_JSON_FORMAT_PROMPT}
+{TOOL_EXAMPLES_PROMPT}
+{TOOL_ACTIONS_PROMPT}
+{TOOL_RULES_PROMPT}
+"""
 
 
 ACTION_STATUS_LABELS = {
@@ -836,6 +743,11 @@ async def resolve_action_plan_mentions(context: "ActionContext", plan: ActionPla
             continue
         resolved_args[field] = _resolve_channel_reference_list(context, resolved_args.get(field))
 
+    if plan.action == "channel_permission_set" and "target" in resolved_args:
+        target = await _resolve_permission_target(context, resolved_args.get("target"))
+        if target is not None:
+            resolved_args["target"] = target.mention
+
     if resolved_args == plan.args:
         return plan
 
@@ -924,7 +836,18 @@ def _natural_action_summary(plan: ActionPlan) -> str:
 
     if plan.action == "channel_update":
         channel = _human_target(args.get("channel"), fallback="대상 채널")
+        details = _format_channel_update_args(args)
+        if details:
+            return f"{channel} 채널 설정 변경: {details}"
         return f"{channel} 채널 설정 변경"
+
+    if plan.action == "channel_permission_set":
+        channel = _human_target(args.get("channel"), fallback="대상 채널")
+        target = _human_target(args.get("target"), fallback="대상")
+        details = _format_channel_permission_args(args)
+        if details:
+            return f"{channel} 채널에서 {target} 권한 설정: {details}"
+        return f"{channel} 채널에서 {target} 권한 설정"
 
     if plan.action == "role_create":
         name = _human_target(args.get("name"), fallback="새 역할")
@@ -963,6 +886,229 @@ def _channel_type_label(value: Any) -> str:
     return labels.get(channel_type, "채널")
 
 
+def _format_channel_update_args(args: dict[str, Any]) -> str:
+    items: list[str] = []
+    field_labels = {
+        "name": "이름",
+        "topic": "주제",
+        "slowmode": "슬로우모드",
+        "nsfw": "NSFW",
+        "bitrate": "비트레이트",
+        "user_limit": "유저 제한",
+        "category": "카테고리",
+        "position": "위치",
+        "sync_permissions": "권한 동기화",
+        "default_auto_archive_duration": "기본 스레드 보관",
+        "default_thread_slowmode": "기본 스레드 슬로우모드",
+        "rtc_region": "RTC 지역",
+        "video_quality_mode": "영상 품질",
+        "default_layout": "기본 레이아웃",
+        "default_sort_order": "기본 정렬",
+        "require_tag": "태그 필수",
+    }
+
+    for key, label in field_labels.items():
+        if key not in args or args.get(key) is None:
+            continue
+        value = _format_channel_setting_value(key, args.get(key))
+        if value:
+            items.append(f"{label}: {value}")
+
+    return ", ".join(items)
+
+
+def _format_channel_edit_kwargs(edit_kwargs: dict[str, Any]) -> str:
+    items: list[str] = []
+    field_labels = {
+        "name": "이름",
+        "topic": "주제",
+        "slowmode_delay": "슬로우모드",
+        "nsfw": "NSFW",
+        "bitrate": "비트레이트",
+        "user_limit": "유저 제한",
+        "category": "카테고리",
+        "position": "위치",
+        "sync_permissions": "권한 동기화",
+        "default_auto_archive_duration": "기본 스레드 보관",
+        "default_thread_slowmode_delay": "기본 스레드 슬로우모드",
+        "rtc_region": "RTC 지역",
+        "video_quality_mode": "영상 품질",
+        "default_layout": "기본 레이아웃",
+        "default_sort_order": "기본 정렬",
+        "require_tag": "태그 필수",
+    }
+
+    for key, value in edit_kwargs.items():
+        label = field_labels.get(key, key)
+        formatted_value = _format_channel_setting_value(key, value)
+        if formatted_value:
+            items.append(f"{label}: {formatted_value}")
+        else:
+            items.append(label)
+
+    return ", ".join(items)
+
+
+def _format_channel_setting_value(key: str, value: Any) -> str:
+    if value is None:
+        return ""
+
+    if key in {"slowmode", "slowmode_delay", "default_thread_slowmode", "default_thread_slowmode_delay"}:
+        seconds = _optional_int(value)
+        if seconds is None:
+            return str(value)
+        if seconds <= 0:
+            return "끔"
+        return f"{seconds}초"
+
+    if key == "default_auto_archive_duration":
+        minutes = _optional_int(value)
+        if minutes is None:
+            return str(value)
+        if minutes % 1440 == 0:
+            return f"{minutes // 1440}일"
+        if minutes % 60 == 0:
+            return f"{minutes // 60}시간"
+        return f"{minutes}분"
+
+    if key == "bitrate":
+        bitrate = _optional_int(value)
+        if bitrate is None:
+            return str(value)
+        return f"{bitrate // 1000}kbps" if bitrate >= 1000 else f"{bitrate}bps"
+
+    if key == "user_limit":
+        limit = _optional_int(value)
+        if limit is None:
+            return str(value)
+        return "제한 없음" if limit <= 0 else f"{limit}명"
+
+    if key in {"nsfw", "sync_permissions", "require_tag"}:
+        boolean = _optional_bool(value)
+        if boolean is None:
+            return str(value)
+        return "켜기" if boolean else "끄기"
+
+    if key == "category":
+        mention = getattr(value, "mention", "")
+        name = getattr(value, "name", "")
+        if mention:
+            return mention
+        return _human_target(name or value, fallback="카테고리")
+
+    if key == "video_quality_mode":
+        name = getattr(value, "name", "")
+        labels = {"auto": "자동", "full": "720p"}
+        return labels.get(str(name or value).casefold(), str(name or value))
+
+    if key == "default_layout":
+        name = getattr(value, "name", "")
+        labels = {"not_set": "기본값", "list_view": "목록 보기", "gallery_view": "갤러리 보기"}
+        return labels.get(str(name or value).casefold(), str(name or value))
+
+    if key == "default_sort_order":
+        name = getattr(value, "name", "")
+        labels = {"latest_activity": "최근 활동", "creation_date": "생성일"}
+        return labels.get(str(name or value).casefold(), str(name or value))
+
+    return _human_target(value, fallback="")
+
+
+def _format_channel_permission_args(args: dict[str, Any]) -> str:
+    if _optional_bool(args.get("clear")):
+        return "권한 덮어쓰기 제거"
+
+    parts: list[str] = []
+    allow = _format_permission_names(args.get("allow"))
+    deny = _format_permission_names(args.get("deny"))
+    custom = _format_permission_dict(args.get("permissions"))
+
+    if allow:
+        parts.append(f"허용: {allow}")
+    if deny:
+        parts.append(f"거부: {deny}")
+    if custom:
+        parts.append(custom)
+
+    return ", ".join(parts)
+
+
+def _format_permission_names(value: Any) -> str:
+    names = [
+        _permission_label(permission_name)
+        for raw_name in _normalize_keywords(value)
+        if (permission_name := _normalize_permission_name(raw_name))
+    ]
+    return ", ".join(names)
+
+
+def _format_permission_dict(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+
+    allow: list[str] = []
+    deny: list[str] = []
+    unset: list[str] = []
+    for raw_name, raw_state in value.items():
+        permission_name = _normalize_permission_name(str(raw_name))
+        if not permission_name:
+            continue
+        label = _permission_label(permission_name)
+        state = _optional_bool(raw_state)
+        if state is True:
+            allow.append(label)
+        elif state is False:
+            deny.append(label)
+        else:
+            unset.append(label)
+
+    parts: list[str] = []
+    if allow:
+        parts.append(f"허용: {', '.join(allow)}")
+    if deny:
+        parts.append(f"거부: {', '.join(deny)}")
+    if unset:
+        parts.append(f"초기화: {', '.join(unset)}")
+    return ", ".join(parts)
+
+
+def _permission_label(permission_name: str) -> str:
+    labels = {
+        "administrator": "관리자",
+        "manage_guild": "서버 관리",
+        "view_channel": "채널 보기",
+        "read_messages": "메시지 읽기",
+        "send_messages": "메시지 보내기",
+        "manage_messages": "메시지 관리",
+        "pin_messages": "메시지 고정",
+        "manage_roles": "역할 관리",
+        "manage_channels": "채널 관리",
+        "connect": "음성 연결",
+        "speak": "음성 말하기",
+        "stream": "화면 공유",
+        "mute_members": "멤버 음소거",
+        "deafen_members": "멤버 헤드셋 음소거",
+        "move_members": "멤버 이동",
+        "use_voice_activation": "음성 감지 사용",
+        "priority_speaker": "우선 발언",
+        "create_instant_invite": "초대 만들기",
+        "send_tts_messages": "TTS 메시지 보내기",
+        "embed_links": "링크 임베드",
+        "attach_files": "파일 첨부",
+        "read_message_history": "메시지 기록 보기",
+        "mention_everyone": "everyone 멘션",
+        "use_external_emojis": "외부 이모지 사용",
+        "add_reactions": "반응 추가",
+        "use_application_commands": "앱 명령어 사용",
+        "send_messages_in_threads": "스레드에 메시지 보내기",
+        "create_public_threads": "공개 스레드 만들기",
+        "create_private_threads": "비공개 스레드 만들기",
+        "manage_threads": "스레드 관리",
+        "use_external_stickers": "외부 스티커 사용",
+    }
+    return labels.get(permission_name, permission_name)
+
+
 @dataclass
 class ActionContext:
     bot: "DiscordAIBot"
@@ -996,9 +1142,8 @@ async def _plan_action(
             {
                 "role": "user",
                 "content": (
-                    "현재 요청에서 멤버 대상을 ID로 고를 때만 참고할 Discord 멤버 목록이다. "
-                    "대상 멤버가 이 목록에 있으면 member 값은 반드시 id 문자열로 넣고, "
-                    "목록에 없는 ID는 추측하지 마라.\n"
+                    "멤버 참조. 대상이 목록에 있으면 member는 id 문자열. "
+                    "없으면 ID 추측 금지, 사용자가 말한 이름 문자열 사용.\n"
                     f"{member_reference_context}"
                 ),
             }
@@ -1008,9 +1153,8 @@ async def _plan_action(
             {
                 "role": "user",
                 "content": (
-                    "현재 요청에서 채널 대상을 멘션으로 고를 때만 참고할 Discord 채널 목록이다. "
-                    "대상 채널이 이 목록에 있으면 channel/source_channel/destination_channel/category/forum/thread 값은 "
-                    "반드시 mention 문자열(<#id>)로 넣고, 목록에 없는 ID는 추측하지 마라.\n"
+                    "채널 참조. 대상이 목록에 있으면 채널형 인자는 mention 문자열(<#id>). "
+                    "없으면 ID 추측 금지, 사용자가 말한 이름 문자열 사용.\n"
                     f"{channel_reference_context}"
                 ),
             }
@@ -1020,9 +1164,8 @@ async def _plan_action(
             {
                 "role": "user",
                 "content": (
-                    "현재 음성/스테이지 채널 접속자 목록이다. "
-                    "사용자가 특정 음성 채널의 모든 유저에게 멤버별 음성 작업을 요청하면 "
-                    "listed members 각각에 대해 actions 배열로 도구 호출을 만들어라.\n"
+                    "음성/스테이지 접속자 참조. 특정 음성 채널의 모든 유저 대상 요청이면 "
+                    "listed members 각각을 actions 배열로 펼쳐라.\n"
                     f"{voice_reference_context}"
                 ),
             }
@@ -1032,7 +1175,7 @@ async def _plan_action(
             {
                 "role": "user",
                 "content": (
-                    "최근 채널 대화 문맥이다. 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라. "
+                    "최근 대화 문맥. 생략된 대상/기간/채널/역할 보충에만 사용하고, "
                     "과거 메시지만으로 새 작업을 실행하지 마라.\n"
                     f"{channel_context}"
                 ),
@@ -1041,7 +1184,11 @@ async def _plan_action(
     messages.append({"role": "user", "content": f"현재 요청: {prompt}"})
     raw = await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=0.0, max_tokens=bot.agent.max_tokens),
+        ProviderOptions(
+            temperature=0.0,
+            max_tokens=bot.agent.max_tokens,
+            reasoning_effort=bot.agent.reasoning_effort,
+        ),
     )
     return _parse_action_plan(raw)
 
@@ -1064,10 +1211,8 @@ async def _generate_agent_turn(
             {
                 "role": "user",
                 "content": (
-                    "현재 요청에서 멤버 대상을 ID로 고를 때만 참고할 Discord 멤버 목록이다. "
-                    "서버 관리 도구 호출 JSON을 만들 때 대상 멤버가 이 목록에 있으면 "
-                    "member 값은 이름이 아니라 반드시 id 문자열로 넣어라. "
-                    "목록에 없는 ID는 추측하지 마라.\n"
+                    "멤버 참조. 대상이 목록에 있으면 member는 이름이 아니라 id 문자열. "
+                    "없으면 ID 추측 금지.\n"
                     f"{member_reference_context}"
                 ),
             }
@@ -1077,10 +1222,8 @@ async def _generate_agent_turn(
             {
                 "role": "user",
                 "content": (
-                    "현재 요청에서 채널 대상을 멘션으로 고를 때만 참고할 Discord 채널 목록이다. "
-                    "서버 관리 도구 호출 JSON을 만들 때 대상 채널이 이 목록에 있으면 "
-                    "채널형 인자 값은 이름이나 ID가 아니라 반드시 mention 문자열(<#id>)로 넣어라. "
-                    "목록에 없는 ID는 추측하지 마라.\n"
+                    "채널 참조. 대상이 목록에 있으면 채널형 인자는 이름/ID가 아니라 mention 문자열(<#id>). "
+                    "없으면 ID 추측 금지.\n"
                     f"{channel_reference_context}"
                 ),
             }
@@ -1090,11 +1233,8 @@ async def _generate_agent_turn(
             {
                 "role": "user",
                 "content": (
-                    "현재 음성/스테이지 채널 접속자 목록이다. "
-                    "서버 관리 도구 호출 JSON을 만들 때, 사용자가 특정 음성 채널의 모든 유저/전원/전체에게 "
-                    "마이크 음소거, 헤드셋 음소거, 연결 끊기, 이동 같은 멤버별 음성 작업을 요청하면 "
-                    "그 채널의 listed members 각각을 대상으로 actions 배열을 출력하라. "
-                    "단일 기능만 가능하다고 답하지 마라.\n"
+                    "음성/스테이지 접속자 참조. 특정 채널의 모든 유저/전원/전체 대상 "
+                    "음성 작업은 listed members 각각을 actions 배열로 펼쳐라.\n"
                     f"{voice_reference_context}"
                 ),
             }
@@ -1104,8 +1244,7 @@ async def _generate_agent_turn(
             {
                 "role": "user",
                 "content": (
-                    "최근 채널 대화 문맥이다. 답변과 도구 호출에 참고하되, "
-                    "과거 메시지만으로 새 작업을 실행하지 마라.\n"
+                    "최근 대화 문맥. 답변/도구 호출 보충에만 사용하고 과거 메시지만으로 새 작업을 실행하지 마라.\n"
                     f"{channel_context}"
                 ),
             }
@@ -1113,7 +1252,11 @@ async def _generate_agent_turn(
     messages.append({"role": "user", "content": prompt})
     return await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=bot.agent.temperature, max_tokens=bot.agent.max_tokens),
+        ProviderOptions(
+            temperature=bot.agent.temperature,
+            max_tokens=bot.agent.max_tokens,
+            reasoning_effort=bot.agent.reasoning_effort,
+        ),
     )
 
 
@@ -1147,8 +1290,7 @@ async def _retry_agent_action_json(
             {
                 "role": "user",
                 "content": (
-                    "최근 채널 대화 문맥이다. 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라. "
-                    "과거 메시지만으로 새 작업을 실행하지 마라.\n"
+                    "최근 대화 문맥. 생략 정보 보충에만 사용하고 과거 메시지만으로 새 작업을 실행하지 마라.\n"
                     f"{channel_context}"
                 ),
             }
@@ -1158,8 +1300,7 @@ async def _retry_agent_action_json(
             {
                 "role": "user",
                 "content": (
-                    "멤버 목록이다. 대상 멤버가 이 목록에 있으면 member 값은 반드시 id 문자열로 고쳐라. "
-                    "목록에 없는 ID는 추측하지 마라.\n"
+                    "멤버 참조. 대상이 있으면 member를 id 문자열로 고쳐라. 없는 ID는 추측하지 마라.\n"
                     f"{member_reference_context}"
                 ),
             }
@@ -1169,8 +1310,7 @@ async def _retry_agent_action_json(
             {
                 "role": "user",
                 "content": (
-                    "채널 목록이다. 대상 채널이 이 목록에 있으면 채널형 인자 값은 반드시 mention 문자열(<#id>)로 고쳐라. "
-                    "목록에 없는 ID는 추측하지 마라.\n"
+                    "채널 참조. 대상이 있으면 채널형 인자를 mention 문자열(<#id>)로 고쳐라. 없는 ID는 추측하지 마라.\n"
                     f"{channel_reference_context}"
                 ),
             }
@@ -1180,8 +1320,7 @@ async def _retry_agent_action_json(
             {
                 "role": "user",
                 "content": (
-                    "음성 채널 접속자 목록이다. 특정 음성 채널의 모든 유저 대상 요청이면 "
-                    "listed members 각각에 대해 actions 배열로 고쳐라.\n"
+                    "음성 접속자 참조. 특정 음성 채널 전체 대상이면 listed members 각각을 actions로 고쳐라.\n"
                     f"{voice_reference_context}"
                 ),
             }
@@ -1198,7 +1337,11 @@ async def _retry_agent_action_json(
     )
     return await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=0.0, max_tokens=bot.agent.max_tokens),
+        ProviderOptions(
+            temperature=0.0,
+            max_tokens=bot.agent.max_tokens,
+            reasoning_effort=bot.agent.reasoning_effort,
+        ),
     )
 
 
@@ -1234,8 +1377,7 @@ async def _retry_agent_action_after_validation(
             {
                 "role": "user",
                 "content": (
-                    "최근 채널 대화 문맥이다. 현재 요청의 생략된 대상, 기간, 채널, 역할을 보충할 때만 참고하라. "
-                    "과거 메시지만으로 새 작업을 실행하지 마라.\n"
+                    "최근 대화 문맥. 생략 정보 보충에만 사용하고 과거 메시지만으로 새 작업을 실행하지 마라.\n"
                     f"{channel_context}"
                 ),
             }
@@ -1245,8 +1387,7 @@ async def _retry_agent_action_after_validation(
             {
                 "role": "user",
                 "content": (
-                    "멤버 목록이다. 대상 멤버가 이 목록에 있으면 member 값은 반드시 id 문자열로 고쳐라. "
-                    "목록에 없는 ID는 추측하지 마라.\n"
+                    "멤버 참조. 대상이 있으면 member를 id 문자열로 고쳐라. 없는 ID는 추측하지 마라.\n"
                     f"{member_reference_context}"
                 ),
             }
@@ -1256,8 +1397,7 @@ async def _retry_agent_action_after_validation(
             {
                 "role": "user",
                 "content": (
-                    "채널 목록이다. 대상 채널이 이 목록에 있으면 채널형 인자 값은 반드시 mention 문자열(<#id>)로 고쳐라. "
-                    "목록에 없는 ID는 추측하지 마라.\n"
+                    "채널 참조. 대상이 있으면 채널형 인자를 mention 문자열(<#id>)로 고쳐라. 없는 ID는 추측하지 마라.\n"
                     f"{channel_reference_context}"
                 ),
             }
@@ -1267,8 +1407,7 @@ async def _retry_agent_action_after_validation(
             {
                 "role": "user",
                 "content": (
-                    "음성 채널 접속자 목록이다. 특정 음성 채널의 모든 유저 대상 요청이면 "
-                    "listed members 각각에 대해 actions 배열로 고쳐라.\n"
+                    "음성 접속자 참조. 특정 음성 채널 전체 대상이면 listed members 각각을 actions로 고쳐라.\n"
                     f"{voice_reference_context}"
                 ),
             }
@@ -1285,7 +1424,11 @@ async def _retry_agent_action_after_validation(
     )
     return await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=0.0, max_tokens=bot.agent.max_tokens),
+        ProviderOptions(
+            temperature=0.0,
+            max_tokens=bot.agent.max_tokens,
+            reasoning_effort=bot.agent.reasoning_effort,
+        ),
     )
 
 
@@ -1332,7 +1475,11 @@ async def _generate_action_issue_feedback(
     )
     return await bot.agent.provider.generate_response(
         messages,
-        ProviderOptions(temperature=bot.agent.temperature, max_tokens=bot.agent.max_tokens),
+        ProviderOptions(
+            temperature=bot.agent.temperature,
+            max_tokens=bot.agent.max_tokens,
+            reasoning_effort=bot.agent.reasoning_effort,
+        ),
     )
 
 
@@ -2195,7 +2342,7 @@ async def _channel_update(context: ActionContext, args: dict[str, Any]) -> str:
     if "name" in edit_kwargs:
         _mark_channel_name_update_cooldown(channel.id)
 
-    changed = ", ".join(f"`{key}`" for key in edit_kwargs)
+    changed = _format_channel_edit_kwargs(edit_kwargs)
     label = channel.mention if hasattr(channel, "mention") else f"`{channel.name}`"
     return f"{label} 채널 설정을 변경했어요: {changed}"
 
@@ -2423,7 +2570,9 @@ async def _channel_permission_set(context: ActionContext, args: dict[str, Any]) 
     except discord.HTTPException as exc:
         return f"채널 권한 변경에 실패했어요: {exc.text or exc}"
 
-    return f"{channel.mention} 채널에서 {target.mention} 권한 덮어쓰기를 변경했어요."
+    details = _format_channel_permission_args(args)
+    suffix = f": {details}" if details else ""
+    return f"{channel.mention} 채널에서 {target.mention} 권한 덮어쓰기를 변경했어요{suffix}"
 
 
 async def _role_create(context: ActionContext, args: dict[str, Any]) -> str:
