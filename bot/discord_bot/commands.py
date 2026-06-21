@@ -52,17 +52,20 @@ def register_commands(bot: "DiscordAIBot") -> None:
     @app_commands.describe(
         message="AI에게 보낼 내용",
         style="이 요청에만 임시로 적용할 AI 스타일",
+        attachment="AI가 함께 읽을 이미지 파일",
     )
     @app_commands.autocomplete(style=style_autocomplete)
     async def ai_command(
         interaction: discord.Interaction,
-        message: str,
+        message: str = "",
         style: str = "",
+        attachment: discord.Attachment | None = None,
     ) -> None:
         await handle_ai_request(
             bot=bot,
             prompt=message,
             interaction=interaction,
+            attachments=(attachment,) if attachment is not None else (),
             source="slash_command",
             style_name=style or None,
         )

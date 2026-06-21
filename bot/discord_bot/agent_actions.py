@@ -13,7 +13,7 @@ import discord
 
 from agent.styles import STYLE_NAMES, STYLE_PRESETS, format_style_presets, is_valid_style, resolve_style_name
 from discord_bot.settings_store import AUTOCHANNEL_MODES
-from providers.base import Message, ProviderOptions
+from providers.base import Message, MessageContent, ProviderOptions
 
 if TYPE_CHECKING:
     from discord_bot.client import DiscordAIBot
@@ -64,6 +64,8 @@ TOOL_RULES_PROMPT = """\
 - channel/source_channel/destination_channel/category/forum/thread 및 채널 배열은 목록에 있으면 mention 문자열(<#id>)을 쓴다. 없는 ID는 추측하지 말고 이름 문자열을 쓴다.
 - mention/ID가 입력에 직접 있으면 그대로 쓴다. 예: <#123>, <@456>, <@&789>.
 - 멘션은 코드블록/백틱 안에 넣지 않는다. `<@id>`, `<#id>` 그대로 써야 Discord가 멘션으로 인식한다.
+- 자연어 답변에서 멤버를 가리킬 때는 숫자 ID만 쓰거나 이름(숫자ID)처럼 쓰지 말고, 반드시 `<@id>` 유저 멘션 형식을 사용한다.
+- `<@닉네임>`, `<@이름>`처럼 id 자리에 이름을 넣은 가짜 멘션은 절대 쓰지 않는다. `<@...>` 안에는 실제 숫자 id만 들어간다.
 - 음성 채널 접속자 목록이 있고 특정 음성/스테이지 채널의 전체 유저 대상 요청이면 listed members 각각으로 actions를 만든다. 접속자가 없으면 none.content로 짧게 알린다.
 
 자주 쓰는 매핑:
@@ -336,6 +338,7 @@ async def run_agent_turn(
     prompt: str,
     *,
     system_prompt: str,
+    prompt_content: MessageContent | None = None,
     channel_context: str = "",
     member_reference_context: str = "",
     channel_reference_context: str = "",
@@ -345,6 +348,7 @@ async def run_agent_turn(
         bot,
         prompt,
         system_prompt=system_prompt,
+        prompt_content=prompt_content,
         channel_context=channel_context,
         member_reference_context=member_reference_context,
         channel_reference_context=channel_reference_context,
@@ -1198,6 +1202,7 @@ async def _generate_agent_turn(
     prompt: str,
     *,
     system_prompt: str,
+    prompt_content: MessageContent | None = None,
     channel_context: str = "",
     member_reference_context: str = "",
     channel_reference_context: str = "",
@@ -1249,7 +1254,7 @@ async def _generate_agent_turn(
                 ),
             }
         )
-    messages.append({"role": "user", "content": prompt})
+    messages.append({"role": "user", "content": prompt_content if prompt_content is not None else prompt})
     return await bot.agent.provider.generate_response(
         messages,
         ProviderOptions(
@@ -1367,7 +1372,7 @@ async def _retry_agent_action_after_validation(
                 "설명 문장, Markdown, 코드블록은 절대 쓰지 마라. "
                 "최근 문맥으로 대상이나 채널을 보정할 수 있으면 수정된 action과 args를 출력하라. "
                 "정보가 부족해서 더 이상 도구 호출을 고칠 수 없으면 "
-                '{"action":"none","args":{"content":"사용자에게 필요한 정보를 짧게 다시 요청하는 문장"}} '
+                '{"action":"none","args":{"content":"현재 스타일에 맞춰 부족한 정보를 자연스럽게 묻는 답변"}} '
                 "형식으로 출력하라."
             ),
         },
@@ -1450,7 +1455,9 @@ async def _generate_action_issue_feedback(
                 f"{system_prompt}\n\n"
                 "서버 관리 도구 호출을 준비하는 내부 단계에서 문제가 생겼다. "
                 "사용자에게 내부 JSON, action 이름, args 키 이름은 말하지 마라. "
-                "무엇이 부족하거나 불확실한지 짧게 설명하고, 사용자가 다시 요청할 때 필요한 정보를 한 문장으로 알려라."
+                "무엇이 부족하거나 불확실한지 현재 스타일에 맞춰 자연스럽게 설명하라. "
+                "멤버를 가리킬 때는 숫자 ID가 아니라 `<@id>` 유저 멘션 형식으로 말하라. "
+                "필요한 정보가 있으면 그 정보만 물어보고, 불필요한 제안을 덧붙이지 마라."
             ),
         },
     ]
@@ -2238,7 +2245,7 @@ async def _channel_create(context: ActionContext, args: dict[str, Any]) -> str:
                 create_kwargs["default_thread_slowmode_delay"] = default_thread_slowmode
             channel = await context.guild.create_text_channel(name=name, **create_kwargs)
     except discord.Forbidden:
-        return "Discord가 채널 생성을 거부했어요. 봇 권한이나 역할 위치를 확인해 주세요."
+        return "Discord가 채널 생성을 거부했어요. 봇의 채널 관리 권한을 확인해 주세요."
     except discord.HTTPException as exc:
         return f"채널 생성에 실패했어요: {exc.text or exc}"
 
@@ -2617,7 +2624,7 @@ async def _role_create(context: ActionContext, args: dict[str, Any]) -> str:
     try:
         role = await context.guild.create_role(**create_kwargs)
     except discord.Forbidden:
-        return "Discord가 역할 생성을 거부했어요. 봇의 Manage Roles 권한이나 역할 위치를 확인해 주세요."
+        return "Discord가 역할 생성을 거부했어요. 봇의 Manage Roles 권한을 확인해 주세요."
     except discord.HTTPException as exc:
         return f"역할 생성에 실패했어요: {exc.text or exc}"
 
@@ -3549,8 +3556,8 @@ async def _member_nickname(context: ActionContext, args: dict[str, Any]) -> str:
     member = await _resolve_member(context, args.get("member"))
     if member is None:
         return "별명을 바꿀 멤버를 찾지 못했어요. 멤버를 멘션해서 다시 요청해 주세요."
-    if not _can_manage_member(context, member):
-        return "봇과 실행 사용자의 가장 높은 역할이 대상 멤버보다 높아야 별명을 바꿀 수 있어요."
+    if not _bot_can_manage_member(context, member):
+        return "봇의 가장 높은 역할이 대상 멤버보다 높아야 별명을 바꿀 수 있어요."
 
     nickname = str(args.get("nickname") or "").strip() or None
     try:
@@ -3559,7 +3566,7 @@ async def _member_nickname(context: ActionContext, args: dict[str, Any]) -> str:
             reason=_audit_reason(context, "AI agent nickname update"),
         )
     except discord.Forbidden:
-        return "Discord가 별명 변경을 거부했어요. 권한이나 역할 위치를 확인해 주세요."
+        return "Discord가 별명 변경을 거부했어요. 봇의 권한이나 역할 위치를 확인해 주세요."
 
     nickname_label = nickname if nickname is not None else "기본 별명"
     return f"{member.mention} 멤버의 별명을 `{nickname_label}`(으)로 변경했어요."
@@ -4847,6 +4854,11 @@ def _can_manage_member(context: ActionContext, member: discord.Member) -> bool:
             return True
         return context.user.top_role > member.top_role
     return False
+
+
+def _bot_can_manage_member(context: ActionContext, member: discord.Member) -> bool:
+    me = context.guild.me
+    return bool(me is not None and me.top_role > member.top_role)
 
 
 def _can_manage_expressions(context: ActionContext, *, create: bool = False) -> bool:

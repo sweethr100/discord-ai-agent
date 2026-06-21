@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 from urllib.parse import quote
 
-from providers.base import HttpProvider, Message, ProviderOptions, ProviderResponseError
+from providers.base import HttpProvider, Message, MessageContent, ProviderOptions, ProviderResponseError
 
 
 class GeminiProvider(HttpProvider):
@@ -63,16 +63,75 @@ def _convert_messages(messages: Sequence[Message]) -> tuple[str, list[dict[str, 
             continue
 
         if role == "system":
-            system_parts.append(content)
+            system_text = _content_text(content)
+            if system_text:
+                system_parts.append(system_text)
             continue
 
         gemini_role = "model" if role == "assistant" else "user"
-        contents.append({"role": gemini_role, "parts": [{"text": content}]})
+        parts = _convert_content_parts(content)
+        if parts:
+            contents.append({"role": gemini_role, "parts": parts})
 
     if not contents:
         raise ProviderResponseError("Gemini request did not include any user content.")
 
     return "\n\n".join(system_parts), contents
+
+
+def _convert_content_parts(content: MessageContent) -> list[dict[str, Any]]:
+    if isinstance(content, str):
+        return [{"text": content}] if content.strip() else []
+
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+
+        part_type = part.get("type")
+        if part_type == "text":
+            text = str(part.get("text") or "").strip()
+            if text:
+                parts.append({"text": text})
+            continue
+
+        if part_type == "image_url":
+            image_url = part.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else ""
+            parsed = _parse_data_url(str(url or ""))
+            if parsed is not None:
+                mime_type, data = parsed
+                parts.append(
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": data,
+                        }
+                    }
+                )
+
+    return parts
+
+
+def _content_text(content: MessageContent) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    return "\n".join(
+        str(part.get("text") or "").strip()
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text" and str(part.get("text") or "").strip()
+    )
+
+
+def _parse_data_url(url: str) -> tuple[str, str] | None:
+    if not url.startswith("data:") or ";base64," not in url:
+        return None
+
+    header, data = url.split(",", 1)
+    mime_type = header[5:].split(";", 1)[0].strip() or "image/jpeg"
+    if not mime_type.startswith("image/") or not data.strip():
+        return None
+    return mime_type, data
 
 
 def _extract_gemini_content(data: dict[str, Any]) -> str:

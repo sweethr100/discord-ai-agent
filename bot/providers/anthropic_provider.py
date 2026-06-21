@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from providers.base import HttpProvider, Message, ProviderOptions, ProviderResponseError
+from providers.base import HttpProvider, Message, MessageContent, ProviderOptions, ProviderResponseError
 
 
 ANTHROPIC_FALLBACK_MAX_TOKENS = 8192
@@ -55,9 +55,9 @@ class AnthropicProvider(HttpProvider):
         return _extract_anthropic_content(data)
 
 
-def _convert_messages(messages: Sequence[Message]) -> tuple[str, list[dict[str, str]]]:
+def _convert_messages(messages: Sequence[Message]) -> tuple[str, list[dict[str, Any]]]:
     system_parts: list[str] = []
-    converted: list[dict[str, str]] = []
+    converted: list[dict[str, Any]] = []
 
     for message in messages:
         role = message.get("role", "user")
@@ -66,20 +66,81 @@ def _convert_messages(messages: Sequence[Message]) -> tuple[str, list[dict[str, 
             continue
 
         if role == "system":
-            system_parts.append(content)
+            system_text = _content_text(content)
+            if system_text:
+                system_parts.append(system_text)
             continue
 
-        converted.append(
-            {
-                "role": "assistant" if role == "assistant" else "user",
-                "content": content,
-            }
-        )
+        converted_content = _convert_content(content)
+        if converted_content:
+            converted.append(
+                {
+                    "role": "assistant" if role == "assistant" else "user",
+                    "content": converted_content,
+                }
+            )
 
     if not converted:
         raise ProviderResponseError("Anthropic request did not include any user content.")
 
     return "\n\n".join(system_parts), converted
+
+
+def _convert_content(content: MessageContent) -> str | list[dict[str, Any]]:
+    if isinstance(content, str):
+        return content
+
+    blocks: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+
+        part_type = part.get("type")
+        if part_type == "text":
+            text = str(part.get("text") or "").strip()
+            if text:
+                blocks.append({"type": "text", "text": text})
+            continue
+
+        if part_type == "image_url":
+            image_url = part.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else ""
+            parsed = _parse_data_url(str(url or ""))
+            if parsed is not None:
+                media_type, data = parsed
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": data,
+                        },
+                    }
+                )
+
+    return blocks
+
+
+def _content_text(content: MessageContent) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    return "\n".join(
+        str(part.get("text") or "").strip()
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text" and str(part.get("text") or "").strip()
+    )
+
+
+def _parse_data_url(url: str) -> tuple[str, str] | None:
+    if not url.startswith("data:") or ";base64," not in url:
+        return None
+
+    header, data = url.split(",", 1)
+    media_type = header[5:].split(";", 1)[0].strip() or "image/jpeg"
+    if media_type not in {"image/jpeg", "image/png", "image/gif", "image/webp"} or not data.strip():
+        return None
+    return media_type, data
 
 
 def _extract_anthropic_content(data: dict[str, Any]) -> str:

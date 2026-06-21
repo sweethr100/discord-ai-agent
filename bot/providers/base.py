@@ -8,7 +8,8 @@ from typing import Any, Sequence
 import aiohttp
 
 
-Message = dict[str, str]
+MessageContent = str | list[dict[str, Any]]
+Message = dict[str, Any]
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,7 @@ from discord_bot.agent_actions import (
     validate_action_plan,
 )
 from discord_bot.channel_context import build_channel_context
+from discord_bot.rich_inputs import build_rich_input
 from discord_bot.settings_store import AutoChannelSettings
 from providers.base import (
     Message,
@@ -106,6 +107,14 @@ CONFIRMATION_TIMEOUT_SECONDS = 60.0
 FEEDBACK_GENERATION_ATTEMPTS = 2
 ACTION_VALIDATION_REPLAN_ATTEMPTS = 2
 AUTOCHANNEL_DEBOUNCE_SECONDS = 3.0
+RAW_USER_ID_PATTERN = re.compile(r"(?<![<@#&])\b([1-9]\d{16,19})\b(?!>)")
+INVALID_USER_MENTION_PATTERN = re.compile(r"<@!?([^<@#&>`\n]{1,100})>")
+BACKTICKED_USER_MENTION_PATTERN = re.compile(r"`(<@!?([^<@#&>`\n]{1,100})>)`")
+MARKDOWN_CODE_PATTERN = re.compile(r"(```.*?```|`[^`\n]*`)", re.DOTALL)
+MENTION_ONLY_PROMPT = (
+    "내가 봇을 멘션만 했다. 최근 채널 대화 문맥을 보고 내가 지금 무엇에 대해 답을 원하는지 추론해서 자연스럽게 답해줘. "
+    "문맥만으로 의도를 알 수 없으면 억지로 꾸미지 말고 무엇을 도와주면 되는지 짧게 물어봐."
+)
 
 
 @dataclass
@@ -136,18 +145,25 @@ async def handle_ai_request(
     *,
     interaction: discord.Interaction | None = None,
     message: discord.Message | None = None,
+    attachments: tuple[discord.Attachment, ...] = (),
     source: str,
     style_name: str | None = None,
 ) -> None:
     if interaction is None and message is None:
         raise ValueError("interaction 또는 message 중 하나는 필요합니다.")
 
-    prompt = prompt.strip()
-    if not prompt:
+    original_prompt = prompt.strip()
+    mention_only = not original_prompt and source == "mention"
+    if mention_only:
+        original_prompt = MENTION_ONLY_PROMPT
+    if not original_prompt and not attachments and not (message and message.attachments):
         await _send_short_notice(interaction, message, "메시지를 함께 보내 주세요.")
         return
 
     thinking_message = await _send_thinking_message(interaction, message)
+    prompt_for_error = original_prompt
+    system_prompt_for_error = ""
+    channel_context_for_error = ""
 
     try:
         async def update_action_status(content: str) -> None:
@@ -159,7 +175,16 @@ async def handle_ai_request(
 
         guild_id = _get_guild_id(interaction, message)
         channel_id = _get_channel_id(interaction, message)
-        requested_style = _extract_requested_style(prompt, bot, guild_id) if style_name is None else None
+        rich_input = await build_rich_input(
+            prompt=original_prompt,
+            message=message,
+            attachments=attachments,
+        )
+        prompt = rich_input.text
+        prompt_for_error = prompt
+        prompt_for_intent = "" if mention_only else (original_prompt or prompt)
+
+        requested_style = _extract_requested_style(prompt_for_intent, bot, guild_id) if style_name is None else None
         effective_style = (
             style_name
             or requested_style
@@ -172,21 +197,23 @@ async def handle_ai_request(
             style=effective_style,
             custom_prompt=bot.settings.get_custom_style_prompt(guild_id),
             style_prompt=custom_style.prompt if custom_style else None,
-            include_self_manual=_should_include_self_manual(prompt),
+            include_self_manual=_should_include_self_manual(prompt_for_intent),
         )
+        system_prompt_for_error = system_prompt
         channel_context = await build_channel_context(
             interaction=interaction,
             message=message,
             limit=bot.config.channel_context_messages,
             char_limit=bot.config.channel_context_char_limit,
         )
+        channel_context_for_error = channel_context
         discord_guild = interaction.guild if interaction else message.guild if message else None
         requester = interaction.user if interaction else message.author if message else None
         member_reference_context = (
             await build_member_reference_context(
                 guild=discord_guild,
                 requester=requester,
-                prompt=prompt,
+                prompt=prompt_for_intent,
                 message=message,
             )
             if discord_guild is not None
@@ -197,7 +224,7 @@ async def handle_ai_request(
             build_channel_reference_context(
                 guild=discord_guild,
                 current_channel=current_channel,
-                prompt=prompt,
+                prompt=prompt_for_intent,
                 message=message,
             )
             if discord_guild is not None
@@ -212,6 +239,7 @@ async def handle_ai_request(
             bot,
             prompt,
             system_prompt=system_prompt,
+            prompt_content=rich_input.content,
             channel_context=channel_context,
             member_reference_context=member_reference_context,
             channel_reference_context=channel_reference_context,
@@ -259,7 +287,7 @@ async def handle_ai_request(
                     logger.warning("Provider returned invalid validation replan for action: %s", action_plan.action)
                     break
                 if repaired_turn.action_plan is None:
-                    chunks = split_discord_message(normalize_discord_markdown(repaired_turn.content))
+                    chunks = _response_chunks(repaired_turn.content, interaction=interaction, message=message)
                     await _send_response_chunks(
                         chunks,
                         thinking_message=thinking_message,
@@ -281,8 +309,15 @@ async def handle_ai_request(
                     )
                 except ProviderResponseError:
                     logger.warning("Provider returned invalid validation feedback for action: %s", action_plan.action)
-                    validation_response = validation_error
-                chunks = split_discord_message(normalize_discord_markdown(validation_response))
+                    validation_response = await _generate_plain_feedback_or_fallback(
+                        bot=bot,
+                        prompt=prompt,
+                        raw_message=validation_error,
+                        system_prompt=system_prompt,
+                        channel_context=channel_context,
+                        label="validation feedback fallback",
+                    )
+                chunks = _response_chunks(validation_response, interaction=interaction, message=message)
                 await _send_response_chunks(
                     chunks,
                     thinking_message=thinking_message,
@@ -307,7 +342,11 @@ async def handle_ai_request(
                 )
                 return
 
-            execution_result = await execute_agent_action(action_context, action_plan)
+            try:
+                execution_result = await execute_agent_action(action_context, action_plan)
+            except Exception:
+                logger.exception("Failed to execute AI action: %s", action_plan.action)
+                execution_result = GENERIC_USER_ERROR
             final_response = await _generate_execution_feedback_or_fallback(
                 bot=bot,
                 prompt=prompt,
@@ -317,7 +356,7 @@ async def handle_ai_request(
                 channel_context=channel_context,
                 confirmed=False,
             )
-            chunks = split_discord_message(normalize_discord_markdown(final_response))
+            chunks = _response_chunks(final_response, interaction=interaction, message=message)
             await _send_response_chunks(
                 chunks,
                 thinking_message=thinking_message,
@@ -327,7 +366,7 @@ async def handle_ai_request(
             return
 
         response = agent_turn.content
-        chunks = split_discord_message(normalize_discord_markdown(response))
+        chunks = _response_chunks(response, interaction=interaction, message=message)
         await _send_response_chunks(
             chunks,
             thinking_message=thinking_message,
@@ -364,9 +403,20 @@ async def handle_ai_request(
         )
     except Exception:
         logger.exception("Failed to handle AI request from %s", source)
+        if system_prompt_for_error:
+            generic_response = await _generate_plain_feedback_or_fallback(
+                bot=bot,
+                prompt=prompt_for_error,
+                raw_message=GENERIC_USER_ERROR,
+                system_prompt=system_prompt_for_error,
+                channel_context=channel_context_for_error,
+                label="generic error feedback fallback",
+            )
+        else:
+            generic_response = GENERIC_USER_ERROR
         await _replace_thinking_message(
             thinking_message=thinking_message,
-            content=GENERIC_USER_ERROR,
+            content=generic_response,
             interaction=interaction,
         )
 
@@ -396,7 +446,7 @@ async def _request_action_confirmation(
         channel_context=channel_context,
         prefix_content=prefix_content,
     )
-    content = describe_action_plan(plan)
+    content = _prefer_member_mentions(describe_action_plan(plan), context.guild)
     if prefix_content.strip():
         content = _append_message_content(prefix_content, f"새 작업 제안: {content}")
     await _edit_ai_message(
@@ -421,8 +471,9 @@ async def _generate_validation_feedback(
             "content": (
                 f"{system_prompt}\n\n"
                 "서버 관리 도구 호출이 실행 전 검증에서 실패했다. "
-                "사용자에게 확인 버튼을 띄우지 말고, 왜 지금 실행할 수 없는지 짧게 말한 뒤 "
-                "필요한 대상/채널/권한/상태 정보를 한 문장으로 다시 요청하라. "
+                "사용자에게 확인 버튼을 띄우지 말고, 지금 실행할 수 없는 이유를 현재 스타일에 맞춰 자연스럽게 설명하라. "
+                "부족한 정보가 있으면 필요한 만큼만 물어보고, 불필요한 추가 제안은 덧붙이지 마라. "
+                "멤버를 가리킬 때는 숫자 ID나 `<@이름>` 가짜 멘션이 아니라, 실제 숫자 ID가 들어간 `<@id>` 유저 멘션 형식으로 말하라. "
                 "도구 호출 JSON, 내부 action 이름, args 키 이름은 말하지 마라."
             ),
         },
@@ -469,9 +520,10 @@ async def _generate_rejection_feedback(
             "content": (
                 f"{system_prompt}\n\n"
                 "서버 관리 도구 호출 확인에서 사용자가 거절을 눌렀다. "
-                "해당 작업은 실행되지 않았음을 짧게 인정하고, 사용자의 원래 의도에 맞춰 "
-                "대안, 수정 요청 방법, 또는 다음에 할 수 있는 일을 간결하게 답하라. "
+                "해당 작업은 실행되지 않았음을 현재 스타일에 맞춰 자연스럽게 인정하라. "
+                "사용자의 원래 의도나 거절 메모에 직접 관련된 내용만 답하고, 대안이나 제안을 억지로 붙이지 마라. "
                 "사용자가 거절하면서 추가 메시지를 남겼다면 그 내용을 우선 반영하라. "
+                "멤버를 가리킬 때는 숫자 ID나 `<@이름>` 가짜 멘션이 아니라, 실제 숫자 ID가 들어간 `<@id>` 유저 멘션 형식으로 말하라. "
                 "새 도구 호출 JSON을 만들지 말고, 확인 버튼을 텍스트로 흉내 내지 마라."
             ),
         },
@@ -523,9 +575,12 @@ async def _generate_execution_feedback(
             "content": (
                 f"{system_prompt}\n\n"
                 "서버 관리 도구 실행이 끝났다. 실행 결과를 바탕으로 사용자에게 최종 답변을 하라. "
+                "현재 스타일 지시가 최우선이다. 도구 실행 결과 문장을 그대로 복사하지 말고, 스타일에 맞는 말투로 다시 말하라. "
                 "이미 실행된 작업을 다시 확인하지 말고, 수락/거절 버튼을 텍스트로 흉내 내지 마라. "
-                "성공이면 무엇이 완료됐는지 짧게 말하고, 실패나 제한이면 이유와 다음 조치를 간결하게 알려라. "
+                "성공이면 무엇이 완료됐는지 말하고, 실패나 제한이면 이유를 자연스럽게 알려라. "
+                "후속 안내나 체크리스트는 사용자가 원했거나 꼭 필요할 때만 붙여라. "
                 "성공 답변에는 대상 멤버/채널/역할과 변경된 값이 실행 결과에 있으면 반드시 포함하라. "
+                "멤버를 가리킬 때는 숫자 ID나 `<@이름>` 가짜 멘션이 아니라, 실제 숫자 ID가 들어간 `<@id>` 유저 멘션 형식으로 말하라. "
                 "내부 action 이름이나 args 키 이름은 말하지 마라."
             ),
         },
@@ -582,7 +637,67 @@ async def _generate_execution_feedback_or_fallback(
             "confirmed " if confirmed else "",
             action_plan.action,
         )
-        return execution_result
+        return await _generate_plain_feedback_or_fallback(
+            bot=bot,
+            prompt=prompt,
+            raw_message=execution_result,
+            system_prompt=system_prompt,
+            channel_context=channel_context,
+            label="execution feedback fallback",
+        )
+
+
+async def _generate_plain_feedback_or_fallback(
+    *,
+    bot: "DiscordAIBot",
+    prompt: str,
+    raw_message: str,
+    system_prompt: str,
+    channel_context: str,
+    label: str,
+) -> str:
+    messages: list[Message] = [
+        {
+            "role": "system",
+            "content": (
+                f"{system_prompt}\n\n"
+                "아래 상태 메시지를 바탕으로 Discord에 보낼 최종 답변을 작성하라. "
+                "현재 스타일/말투 지시를 반드시 유지하고, 내부 오류명이나 JSON 키는 말하지 마라. "
+                "원문의 의미는 바꾸지 말고, 정해진 템플릿 없이 자연스럽게 답하라. "
+                "멤버를 가리킬 때는 숫자 ID나 `<@이름>` 가짜 멘션이 아니라, 실제 숫자 ID가 들어간 `<@id>` 유저 멘션 형식으로 말하라. "
+                "추가 제안은 꼭 필요할 때만 포함하라."
+            ),
+        },
+    ]
+    if channel_context.strip():
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "최근 채널 대화 문맥이다. 사용자의 의도를 이해하는 데만 참고하라.\n"
+                    f"{channel_context.strip()}"
+                ),
+            }
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"사용자 요청: {prompt}\n"
+                f"상태 메시지: {raw_message}"
+            ),
+        }
+    )
+
+    try:
+        return await _generate_feedback_response(
+            bot=bot,
+            messages=messages,
+            label=label,
+        )
+    except Exception:
+        logger.exception("Failed to generate styled %s.", label)
+        return raw_message
 
 
 async def _generate_feedback_response(
@@ -680,7 +795,9 @@ class AgentActionConfirmView(discord.ui.View):
                 return
             self.completed = True
             self._disable_buttons()
-            accepted_content = self._status_content(f"{describe_action_plan(self.plan)} 수락됨.")
+            accepted_content = self._status_content(
+                f"{_prefer_member_mentions(describe_action_plan(self.plan), self.context.guild)} 수락됨."
+            )
             await interaction.response.edit_message(
                 content=accepted_content,
                 view=self,
@@ -699,11 +816,17 @@ class AgentActionConfirmView(discord.ui.View):
             execution_result = await execute_agent_action(self.context, self.plan)
         except Exception:
             logger.exception("Failed to execute confirmed AI action: %s", self.plan.action)
-            await _edit_ai_message(
-                self.response_message,
-                content=_append_message_content(accepted_content, GENERIC_USER_ERROR),
-                view=None,
+            response = await _generate_execution_feedback_or_fallback(
+                bot=self.bot,
+                prompt=self.prompt,
+                action_plan=self.plan,
+                execution_result=GENERIC_USER_ERROR,
+                system_prompt=self.system_prompt,
+                channel_context=self.channel_context,
+                confirmed=True,
             )
+            chunks = _response_chunks(response, guild=self.context.guild)
+            await _send_response_chunks_to_message(self.response_message, chunks)
             self.stop()
             return
 
@@ -716,8 +839,8 @@ class AgentActionConfirmView(discord.ui.View):
             channel_context=self.channel_context,
             confirmed=True,
         )
-        chunks = split_discord_message(normalize_discord_markdown(response))
-        await _append_response_chunks_to_message(self.response_message, accepted_content, chunks)
+        chunks = _response_chunks(response, guild=self.context.guild)
+        await _send_response_chunks_to_message(self.response_message, chunks)
         self.stop()
 
     @discord.ui.button(label="거절", style=discord.ButtonStyle.secondary)
@@ -744,7 +867,9 @@ class AgentActionConfirmView(discord.ui.View):
                 return
             self.completed = True
             self._disable_buttons()
-            rejected_content = self._status_content(f"{describe_action_plan(self.plan)} 거절됨.")
+            rejected_content = self._status_content(
+                f"{_prefer_member_mentions(describe_action_plan(self.plan), self.context.guild)} 거절됨."
+            )
             await interaction.response.defer()
             await _edit_ai_message(
                 self.response_message,
@@ -772,16 +897,23 @@ class AgentActionConfirmView(discord.ui.View):
             )
         except Exception:
             logger.exception("Failed to generate rejection feedback: %s", self.plan.action)
-            await _append_response_chunks_to_message(
+            response = await _generate_plain_feedback_or_fallback(
+                bot=self.bot,
+                prompt=self.prompt,
+                raw_message=GENERIC_USER_ERROR,
+                system_prompt=self.system_prompt,
+                channel_context=self.channel_context,
+                label="rejection feedback fallback",
+            )
+            await _send_response_chunks_to_message(
                 self.response_message,
-                rejected_content,
-                [GENERIC_USER_ERROR],
+                _response_chunks(response, guild=self.context.guild),
             )
             self.stop()
             return
 
-        chunks = split_discord_message(normalize_discord_markdown(response))
-        await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
+        chunks = _response_chunks(response, guild=self.context.guild)
+        await _send_response_chunks_to_message(self.response_message, chunks)
         self.stop()
 
     async def _try_replan_after_rejection(
@@ -827,7 +959,7 @@ class AgentActionConfirmView(discord.ui.View):
 
         action_plan = agent_turn.action_plan
         if action_plan is None:
-            chunks = split_discord_message(normalize_discord_markdown(agent_turn.content))
+            chunks = _response_chunks(agent_turn.content, guild=self.context.guild)
             await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
             return True
 
@@ -854,7 +986,7 @@ class AgentActionConfirmView(discord.ui.View):
                 logger.warning("Provider returned invalid rejection replan repair: %s", action_plan.action)
                 break
             if repaired_turn.action_plan is None:
-                chunks = split_discord_message(normalize_discord_markdown(repaired_turn.content))
+                chunks = _response_chunks(repaired_turn.content, guild=self.context.guild)
                 await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
                 return True
             action_plan = repaired_turn.action_plan
@@ -870,8 +1002,15 @@ class AgentActionConfirmView(discord.ui.View):
                     channel_context=self.channel_context,
                 )
             except ProviderResponseError:
-                validation_response = validation_error
-            chunks = split_discord_message(normalize_discord_markdown(validation_response))
+                validation_response = await _generate_plain_feedback_or_fallback(
+                    bot=self.bot,
+                    prompt=replan_prompt,
+                    raw_message=validation_error,
+                    system_prompt=self.system_prompt,
+                    channel_context=self.channel_context,
+                    label="rejection validation feedback fallback",
+                )
+            chunks = _response_chunks(validation_response, guild=self.context.guild)
             await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
             return True
 
@@ -890,12 +1029,19 @@ class AgentActionConfirmView(discord.ui.View):
             )
             await _edit_ai_message(
                 self.response_message,
-                content=_append_message_content(rejected_content, f"새 작업 제안: {describe_action_plan(action_plan)}"),
+                content=_append_message_content(
+                    rejected_content,
+                    f"새 작업 제안: {_prefer_member_mentions(describe_action_plan(action_plan), self.context.guild)}",
+                ),
                 view=view,
             )
             return True
 
-        execution_result = await execute_agent_action(self.context, action_plan)
+        try:
+            execution_result = await execute_agent_action(self.context, action_plan)
+        except Exception:
+            logger.exception("Failed to execute rejection replan AI action: %s", action_plan.action)
+            execution_result = GENERIC_USER_ERROR
         response = await _generate_execution_feedback_or_fallback(
             bot=self.bot,
             prompt=replan_prompt,
@@ -905,8 +1051,8 @@ class AgentActionConfirmView(discord.ui.View):
             channel_context=self.channel_context,
             confirmed=False,
         )
-        chunks = split_discord_message(normalize_discord_markdown(response))
-        await _append_response_chunks_to_message(self.response_message, rejected_content, chunks)
+        chunks = _response_chunks(response, guild=self.context.guild)
+        await _send_response_chunks_to_message(self.response_message, chunks)
         return True
 
     async def on_timeout(self) -> None:
@@ -914,7 +1060,9 @@ class AgentActionConfirmView(discord.ui.View):
             return
 
         self._disable_buttons()
-        timeout_content = self._status_content(f"시간 초과로 취소했습니다. {describe_action_plan(self.plan)}")
+        timeout_content = self._status_content(
+            f"시간 초과로 취소했습니다. {_prefer_member_mentions(describe_action_plan(self.plan), self.context.guild)}"
+        )
         await _edit_ai_message(
             self.response_message,
             content=timeout_content,
@@ -1008,6 +1156,8 @@ def _queue_autochannel_request(
         return
 
     content = message.content.strip()
+    if not content and message.attachments and mode == "always":
+        content = "첨부된 이미지나 URL을 읽고 설명해줘."
     if not content:
         return
 
@@ -1084,6 +1234,98 @@ def _get_channel_id(
     if message and message.channel:
         return message.channel.id
     return None
+
+
+def _response_chunks(
+    content: str,
+    *,
+    interaction: discord.Interaction | None = None,
+    message: discord.Message | None = None,
+    guild: discord.Guild | None = None,
+) -> list[str]:
+    guild = guild or _get_response_guild(interaction, message)
+    content = _prefer_member_mentions(content, guild)
+    return split_discord_message(normalize_discord_markdown(content))
+
+
+def _get_response_guild(
+    interaction: discord.Interaction | None,
+    message: discord.Message | None,
+) -> discord.Guild | None:
+    if interaction is not None:
+        return interaction.guild
+    if message is not None:
+        return message.guild
+    return None
+
+
+def _prefer_member_mentions(content: str, guild: discord.Guild | None) -> str:
+    if guild is None or not content:
+        return content
+
+    content = BACKTICKED_USER_MENTION_PATTERN.sub(
+        lambda match: _member_mention_for_label(guild, match.group(2), fallback=match.group(1)),
+        content,
+    )
+    parts = MARKDOWN_CODE_PATTERN.split(content)
+    for index, part in enumerate(parts):
+        if not part or part.startswith("`"):
+            continue
+        part = INVALID_USER_MENTION_PATTERN.sub(
+            lambda match: _member_mention_for_label(guild, match.group(1), fallback=match.group(0)),
+            part,
+        )
+        part = RAW_USER_ID_PATTERN.sub(lambda match: _member_mention_for_id(guild, match), part)
+        parts[index] = part
+    return "".join(parts)
+
+
+def _member_mention_for_id(guild: discord.Guild, match: re.Match[str]) -> str:
+    user_id = int(match.group(1))
+    member = guild.get_member(user_id)
+    return member.mention if member is not None else match.group(0)
+
+
+def _member_mention_for_label(guild: discord.Guild, label: str, *, fallback: str) -> str:
+    label = label.strip()
+    if not label or label.isdigit():
+        return fallback
+
+    member = _find_guild_member_by_label(guild, label)
+    return member.mention if member is not None else fallback
+
+
+def _find_guild_member_by_label(guild: discord.Guild, label: str) -> discord.Member | None:
+    normalized = _normalize_member_label(label)
+    if not normalized:
+        return None
+
+    exact_matches: list[discord.Member] = []
+    partial_matches: list[discord.Member] = []
+    for member in guild.members:
+        values = (
+            member.display_name,
+            member.name,
+            member.global_name or "",
+            member.nick or "",
+            str(member),
+        )
+        normalized_values = [_normalize_member_label(value) for value in values if value]
+        if normalized in normalized_values:
+            exact_matches.append(member)
+            continue
+        if any(normalized in value for value in normalized_values):
+            partial_matches.append(member)
+
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(partial_matches) == 1:
+        return partial_matches[0]
+    return None
+
+
+def _normalize_member_label(value: str) -> str:
+    return re.sub(r"\s+", "", value).casefold().strip("@")
 
 
 def _extract_requested_style(prompt: str, bot: "DiscordAIBot", guild_id: int | None) -> str | None:
