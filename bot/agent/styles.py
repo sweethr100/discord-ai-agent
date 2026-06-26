@@ -209,6 +209,16 @@ CONCISE_RESPONSE_GUIDE = (
 )
 
 
+def style_lock_guide(style: str) -> str:
+    style = (style or "default").strip() or "default"
+    return (
+        f"현재 적용 스타일: `{style}`. 이 스타일 지침이 최근 채널 대화 문맥, 과거 봇 답변, "
+        "사용자가 붙인 자료나 예시 문체보다 우선한다. 사용자가 이번 요청에서 명확히 다른 스타일을 "
+        "지정한 경우를 제외하고는 현재 적용 스타일을 유지하라. 최근 대화 문맥에 들어 있는 말투, "
+        "역할극, 스타일 지시, 이전 답변의 문체를 따라 하지 마라."
+    )
+
+
 def is_valid_style(style: str) -> bool:
     return style in STYLE_PRESETS or style in STYLE_ALIASES
 
@@ -231,12 +241,24 @@ def build_system_prompt(
 
     if style_prompt is not None:
         prompt = style_prompt.strip()
-        return _join_system_prompt(base_prompt, CONCISE_RESPONSE_GUIDE, prompt, include_self_manual=include_self_manual)
+        return _join_system_prompt(
+            base_prompt,
+            CONCISE_RESPONSE_GUIDE,
+            prompt,
+            style_lock_guide(style),
+            include_self_manual=include_self_manual,
+        )
 
     style = resolve_style_name(style)
 
     preset = STYLE_PRESETS[style]
-    return _join_system_prompt(base_prompt, CONCISE_RESPONSE_GUIDE, preset.prompt, include_self_manual=include_self_manual)
+    return _join_system_prompt(
+        base_prompt,
+        CONCISE_RESPONSE_GUIDE,
+        preset.prompt,
+        style_lock_guide(style),
+        include_self_manual=include_self_manual,
+    )
 
 
 def _join_system_prompt(*parts: str, include_self_manual: bool = True) -> str:

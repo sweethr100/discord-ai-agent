@@ -104,8 +104,12 @@ python bot/main.py
 - `/style modify`
 - `/style remove`
 - `/style channel`
+- `/adminaccess grant`
+- `/adminaccess revoke`
+- `/adminaccess list`
 
 - `DISCORD_GUILD_ID`를 넣으면 해당 서버에 즉시 등록됩니다. 개발 중에는 이 방식을 추천합니다.
+- `DISCORD_GUILD_ID`를 넣고 실행하면 오래 남아 있던 global command는 비워지고, 해당 서버의 command만 현재 코드 기준으로 sync됩니다.
 - `DISCORD_GUILD_ID`를 비우면 global command로 등록되며 Discord 반영에 시간이 걸릴 수 있습니다.
 
 서버 ID는 Discord 개발자 모드를 켠 뒤 서버 우클릭으로 복사할 수 있습니다.

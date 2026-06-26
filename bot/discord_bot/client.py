@@ -36,10 +36,16 @@ class DiscordAIBot(commands.Bot):
             guild = discord.Object(id=self.config.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
+            self.tree.clear_commands(guild=None)
+            cleared_global = await self.tree.sync()
             logger.info(
                 "Synced %s slash command(s) to guild %s",
                 len(synced),
                 self.config.discord_guild_id,
+            )
+            logger.info(
+                "Global slash command set now has %s command(s) while using guild sync",
+                len(cleared_global),
             )
         else:
             synced = await self.tree.sync()
