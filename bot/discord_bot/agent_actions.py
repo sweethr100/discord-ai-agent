@@ -27,7 +27,7 @@ TOOL_ACTIONS_PROMPT = """\
 - channel_update: channel, name, topic, slowmode, nsfw, bitrate, user_limit, category, position, sync_permissions, default_auto_archive_duration, default_thread_slowmode, rtc_region, video_quality_mode, default_layout, default_sort_order, require_tag
 - channel_delete: channel; channel_clone: channel, name, category; channel_follow: source_channel, destination_channel; channel_pins_list: channel, limit; channel_permission_set: channel, target, permissions, clear
 - role_create: name, color, secondary_color, tertiary_color, mentionable, hoist, icon_url, unicode_emoji; role_update: role, name, color, secondary_color, tertiary_color, mentionable, hoist, position, icon_url, unicode_emoji
-- role_permissions_update: role, allow, deny; role_delete: role; role_add: member, role; role_remove: member, role
+- role_permissions_update: role, allow, deny; role_delete: role; role_add: member, role; role_remove: member, role; role_list:; member_roles: member
 - emoji_create: name, url; emoji_update: emoji, name; emoji_delete: emoji
 - sticker_create: name, description, emoji, url; sticker_update: sticker, name, description, emoji; sticker_delete: sticker
 - sound_create: name, url, volume, emoji; sound_update: sound, name, volume, emoji; sound_delete: sound
@@ -81,6 +81,7 @@ TOOL_RULES_PROMPT = """\
 - bool/null 필드: nsfw, mentionable, hoist, temporary, muted, deafened, archived, locked.
 - 정수 필드: slowmode, position, bitrate, user_limit, default_auto_archive_duration, default_thread_slowmode.
 - video_quality_mode: auto/full. default_layout: not_set/list_view/gallery_view. default_sort_order: latest_activity/creation_date.
+- 역할 color/secondary_color/tertiary_color는 #5865F2 같은 hex 또는 빨간색/파란색/초록색 같은 색상명도 가능하다.
 - time은 가능하면 ISO 8601. permission 이름은 send_messages, view_channel 같은 Discord permission 문자열 배열.
 - 채널 이름은 사용자가 말한 철자/문자를 그대로 name에 넣는다. 한글/영문/숫자/기호를 임의 변환하지 않는다.
 - 첨부파일로 emoji/sticker/sound 생성 요청이면 url을 비워도 된다.
@@ -100,6 +101,10 @@ TOOL_EXAMPLES_PROMPT = """\
 출력: {"actions":[{"action":"member_nickname","args":{"member":"123456789012345678","nickname":"BSTD"}},{"action":"member_nickname","args":{"member":"234567890123456789","nickname":"브론즈베플"}}]}
 사용자: 음성1에 들어간 모든 유저의 마이크 음소거 해줘
 출력: {"actions":[{"action":"member_mute_voice","args":{"member":"123456789012345678","muted":true}},{"action":"member_mute_voice","args":{"member":"234567890123456789","muted":true}}]}
+사용자: sweet 역할 목록 보여줘
+출력: {"action":"member_roles","args":{"member":"123456789012345678"}}
+사용자: 서버 역할 목록 보여줘
+출력: {"action":"role_list","args":{}}
 사용자: 음성방에서 사람 내보낼 수 있어?
 출력: 음성 채널 멤버 연결 끊기 같은 서버 관리 작업을 도울 수 있어요. 실행하려면 대상 멤버를 말해 주세요.
 """
@@ -154,6 +159,8 @@ ACTION_STATUS_LABELS = {
     "role_delete": "역할 삭제",
     "role_add": "역할 추가",
     "role_remove": "역할 제거",
+    "role_list": "서버 역할 조회",
+    "member_roles": "멤버 역할 조회",
     "emoji_create": "이모지 생성",
     "emoji_update": "이모지 수정",
     "emoji_delete": "이모지 삭제",
@@ -229,6 +236,8 @@ READ_ONLY_ACTIONS = {
     "ban_list",
     "vanity_invite_show",
     "member_timeout_duration_needed",
+    "role_list",
+    "member_roles",
 }
 
 SUPPORTED_ACTIONS = set(ACTION_STATUS_LABELS) | {"none"}
@@ -240,6 +249,83 @@ MAX_MEMBER_REFERENCE_ENTRIES = 500
 MAX_CHANNEL_REFERENCE_ENTRIES = 500
 CHANNEL_NAME_UPDATE_COOLDOWN_SECONDS = 600.0
 _CHANNEL_NAME_UPDATE_COOLDOWNS: dict[int, float] = {}
+COLOR_NAME_HEX: dict[str, int] = {
+    "빨강": 0xFF0000,
+    "빨간": 0xFF0000,
+    "빨간색": 0xFF0000,
+    "레드": 0xFF0000,
+    "red": 0xFF0000,
+    "주황": 0xFFA500,
+    "주황색": 0xFFA500,
+    "오렌지": 0xFFA500,
+    "orange": 0xFFA500,
+    "노랑": 0xFFFF00,
+    "노란": 0xFFFF00,
+    "노란색": 0xFFFF00,
+    "옐로": 0xFFFF00,
+    "yellow": 0xFFFF00,
+    "초록": 0x00FF00,
+    "초록색": 0x00FF00,
+    "녹색": 0x00FF00,
+    "그린": 0x00FF00,
+    "green": 0x00FF00,
+    "파랑": 0x0000FF,
+    "파란": 0x0000FF,
+    "파란색": 0x0000FF,
+    "청색": 0x0000FF,
+    "블루": 0x0000FF,
+    "blue": 0x0000FF,
+    "남색": 0x000080,
+    "네이비": 0x000080,
+    "navy": 0x000080,
+    "보라": 0x800080,
+    "보라색": 0x800080,
+    "퍼플": 0x800080,
+    "purple": 0x800080,
+    "분홍": 0xFFC0CB,
+    "분홍색": 0xFFC0CB,
+    "핑크": 0xFFC0CB,
+    "pink": 0xFFC0CB,
+    "검정": 0x000000,
+    "검은색": 0x000000,
+    "검은": 0x000000,
+    "블랙": 0x000000,
+    "black": 0x000000,
+    "하양": 0xFFFFFF,
+    "하얀색": 0xFFFFFF,
+    "하얀": 0xFFFFFF,
+    "흰색": 0xFFFFFF,
+    "흰": 0xFFFFFF,
+    "화이트": 0xFFFFFF,
+    "white": 0xFFFFFF,
+    "회색": 0x808080,
+    "그레이": 0x808080,
+    "gray": 0x808080,
+    "grey": 0x808080,
+    "갈색": 0x8B4513,
+    "브라운": 0x8B4513,
+    "brown": 0x8B4513,
+    "청록": 0x00FFFF,
+    "청록색": 0x00FFFF,
+    "시안": 0x00FFFF,
+    "cyan": 0x00FFFF,
+    "민트": 0x98FF98,
+    "mint": 0x98FF98,
+    "라임": 0x32CD32,
+    "lime": 0x32CD32,
+    "자홍": 0xFF00FF,
+    "자홍색": 0xFF00FF,
+    "마젠타": 0xFF00FF,
+    "magenta": 0xFF00FF,
+    "금색": 0xFFD700,
+    "골드": 0xFFD700,
+    "gold": 0xFFD700,
+    "은색": 0xC0C0C0,
+    "실버": 0xC0C0C0,
+    "silver": 0xC0C0C0,
+    "디스코드": 0x5865F2,
+    "blurple": 0x5865F2,
+}
 MEMBER_TARGET_ACTIONS = {
     "member_kick",
     "member_ban",
@@ -251,6 +337,7 @@ MEMBER_TARGET_ACTIONS = {
     "member_disconnect_voice",
     "role_add",
     "role_remove",
+    "member_roles",
 }
 CHANNEL_REFERENCE_FIELDS = {
     "channel",
@@ -673,6 +760,11 @@ async def validate_action_plan(context: "ActionContext", plan: ActionPlan) -> st
             requested = _human_target(plan.args.get("role"), fallback="대상 역할")
             return f"{requested} 역할을 서버에서 찾지 못했어요."
 
+    if plan.action in {"role_create", "role_update"}:
+        color_error = _validate_role_color_args(plan.args)
+        if color_error:
+            return color_error
+
     if plan.action in {
         "autochannel_add",
         "autochannel_remove",
@@ -829,6 +921,10 @@ def _natural_action_summary(plan: ActionPlan) -> str:
         role = _human_target(args.get("role"), fallback="대상 역할")
         return f"{member} 님에게서 {role} 역할 제거"
 
+    if plan.action == "member_roles":
+        member = _human_target(args.get("member"), fallback="대상 멤버")
+        return f"{member} 님 역할 목록 조회"
+
     if plan.action == "channel_create":
         name = _human_target(args.get("name"), fallback="새 채널")
         channel_type = _channel_type_label(args.get("type"))
@@ -864,6 +960,9 @@ def _natural_action_summary(plan: ActionPlan) -> str:
     if plan.action == "role_delete":
         role = _human_target(args.get("role"), fallback="대상 역할")
         return f"{role} 역할 삭제"
+
+    if plan.action == "role_list":
+        return "서버 역할 목록 조회"
 
     return ""
 
@@ -1808,6 +1907,10 @@ async def _execute_plan(context: ActionContext, plan: ActionPlan) -> str:
         result = await _role_update_member(context, args, add=True)
     elif action == "role_remove":
         result = await _role_update_member(context, args, add=False)
+    elif action == "role_list":
+        result = _role_list(context)
+    elif action == "member_roles":
+        result = await _member_roles(context, args)
     elif action == "emoji_create":
         result = await _emoji_create(context, args)
     elif action == "emoji_update":
@@ -2594,7 +2697,7 @@ async def _role_create(context: ActionContext, args: dict[str, Any]) -> str:
 
     color = _parse_color(str(args.get("color") or ""))
     if color is None:
-        return "역할 색상은 `#5865F2` 같은 6자리 hex 형식이어야 해요."
+        return "역할 색상은 `#5865F2` 같은 6자리 hex 또는 `빨간색` 같은 색상명으로 알려주세요."
 
     mentionable = bool(args.get("mentionable", False))
     hoist = bool(args.get("hoist", False))
@@ -2657,15 +2760,15 @@ async def _role_update(context: ActionContext, args: dict[str, Any]) -> str:
     if color:
         parsed_color = _parse_color(color)
         if parsed_color is None:
-            return "역할 색상은 `#5865F2` 같은 6자리 hex 형식이어야 해요."
+            return "역할 색상은 `#5865F2` 같은 6자리 hex 또는 `빨간색` 같은 색상명으로 알려주세요."
         edit_kwargs["colour"] = parsed_color
     if args.get("secondary_color") is not None:
         if secondary_color is None:
-            return "역할 보조 색상은 `#5865F2` 같은 6자리 hex 형식이어야 해요."
+            return "역할 보조 색상은 `#5865F2` 같은 6자리 hex 또는 `빨간색` 같은 색상명으로 알려주세요."
         edit_kwargs["secondary_colour"] = secondary_color
     if args.get("tertiary_color") is not None:
         if tertiary_color is None:
-            return "역할 세 번째 색상은 `#5865F2` 같은 6자리 hex 형식이어야 해요."
+            return "역할 세 번째 색상은 `#5865F2` 같은 6자리 hex 또는 `빨간색` 같은 색상명으로 알려주세요."
         edit_kwargs["tertiary_colour"] = tertiary_color
     if isinstance(mentionable, bool):
         edit_kwargs["mentionable"] = mentionable
@@ -2780,6 +2883,54 @@ async def _role_update_member(context: ActionContext, args: dict[str, Any], *, a
         return f"{member.mention}에게서 {role.mention} 역할을 제거했어요."
     except discord.Forbidden:
         return "Discord가 역할 변경을 거부했어요. 봇 권한이나 역할 위치를 확인해 주세요."
+
+
+def _role_list(context: ActionContext) -> str:
+    roles = [role for role in context.guild.roles if role != context.guild.default_role]
+    if not roles:
+        return "이 서버에는 별도 역할이 없습니다."
+
+    sorted_roles = sorted(roles, key=lambda role: (role.position, role.id), reverse=True)
+    lines = [f"서버 역할 목록 {len(sorted_roles)}개:"]
+    for index, role in enumerate(sorted_roles, start=1):
+        flags: list[str] = []
+        if role.hoist:
+            flags.append("분리 표시")
+        if role.mentionable:
+            flags.append("멘션 가능")
+        if role.managed:
+            flags.append("연동 관리")
+
+        details = [
+            f"id={role.id}",
+            f"색상={_role_color_label(role)}",
+            f"멤버={len(role.members)}명",
+        ]
+        if flags:
+            details.append(", ".join(flags))
+        lines.append(f"{index}. {role.mention} ({'; '.join(details)})")
+    return "\n".join(lines)
+
+
+def _role_color_label(role: discord.Role) -> str:
+    value = role.colour.value
+    if value == 0:
+        return "없음"
+    return f"#{value:06X}"
+
+
+async def _member_roles(context: ActionContext, args: dict[str, Any]) -> str:
+    member = await _resolve_member(context, args.get("member"))
+    if member is None:
+        return "대상 멤버를 찾지 못했어요. 멤버를 멘션하거나 정확한 별명/표시 이름으로 다시 요청해 주세요."
+
+    roles = [role for role in member.roles if role != context.guild.default_role]
+    if not roles:
+        return f"{member.mention} 님에게 부여된 별도 역할은 없습니다."
+
+    sorted_roles = sorted(roles, key=lambda role: (role.position, role.id), reverse=True)
+    role_list = ", ".join(role.mention for role in sorted_roles)
+    return f"{member.mention} 님의 역할 {len(sorted_roles)}개: {role_list}"
 
 
 async def _emoji_create(context: ActionContext, args: dict[str, Any]) -> str:
@@ -4825,8 +4976,17 @@ def _extract_ids(value: Any) -> list[int]:
 
 
 def _user_has(context: ActionContext, permission_name: str) -> bool:
+    if _user_is_admin_delegate(context):
+        return True
+
     permissions = getattr(context.user, "guild_permissions", None)
     return bool(permissions and (permissions.administrator or getattr(permissions, permission_name, False)))
+
+
+def _user_is_admin_delegate(context: ActionContext) -> bool:
+    user_id = getattr(context.user, "id", None)
+    guild_id = getattr(context.guild, "id", None)
+    return context.bot.settings.is_admin_delegate(guild_id, user_id)
 
 
 def _bot_has(context: ActionContext, permission_name: str) -> bool:
@@ -4838,6 +4998,8 @@ def _can_manage_role(context: ActionContext, role: discord.Role) -> bool:
     me = context.guild.me
     if me is None or me.top_role <= role:
         return False
+    if _user_is_admin_delegate(context):
+        return True
     if isinstance(context.user, discord.Member):
         if context.user.id == context.guild.owner_id:
             return True
@@ -4849,6 +5011,8 @@ def _can_manage_member(context: ActionContext, member: discord.Member) -> bool:
     me = context.guild.me
     if me is None or me.top_role <= member.top_role:
         return False
+    if _user_is_admin_delegate(context):
+        return True
     if isinstance(context.user, discord.Member):
         if context.user.id == context.guild.owner_id:
             return True
@@ -4998,13 +5162,28 @@ def _parse_color(value: str) -> discord.Colour | None:
     value = value.strip()
     if not value:
         return discord.Colour.default()
-    value = value.removeprefix("#")
-    if len(value) != 6:
+
+    normalized_name = _normalize_color_name(value)
+    named_color = COLOR_NAME_HEX.get(normalized_name)
+    if named_color is not None:
+        return discord.Colour(named_color)
+
+    hex_value = value.casefold().removeprefix("#").removeprefix("0x")
+    if len(hex_value) != 6:
         return None
     try:
-        return discord.Colour(int(value, 16))
+        return discord.Colour(int(hex_value, 16))
     except ValueError:
         return None
+
+
+def _normalize_color_name(value: str) -> str:
+    normalized = re.sub(r"[\s_\-]+", "", value.strip().casefold())
+    if normalized.endswith("색") and normalized not in COLOR_NAME_HEX:
+        without_suffix = normalized[:-1]
+        if without_suffix in COLOR_NAME_HEX:
+            return without_suffix
+    return normalized
 
 
 def _parse_optional_color(value: Any) -> discord.Colour | None:
@@ -5012,6 +5191,27 @@ def _parse_optional_color(value: Any) -> discord.Colour | None:
     if not text:
         return None
     return _parse_color(text)
+
+
+def _validate_role_color_args(args: dict[str, Any]) -> str | None:
+    color_fields = {
+        "color": "역할 색상",
+        "secondary_color": "역할 보조 색상",
+        "tertiary_color": "역할 세 번째 색상",
+    }
+    for field, label in color_fields.items():
+        if field not in args:
+            continue
+        value = str(args.get(field) or "").strip()
+        if not value:
+            continue
+        if _parse_color(value) is None:
+            return (
+                f"색상 코드 오류: {label} `{value}`는 지원하는 색상명이나 6자리 hex가 아니에요. "
+                "사용자가 말한 색상을 다시 해석해 `빨간색`, `파란색`, `#5865F2` 같은 값으로 고치거나, "
+                "확실하지 않으면 사용자에게 색상을 다시 물어보세요."
+            )
+    return None
 
 
 def _parse_video_quality_mode(value: Any) -> discord.VideoQualityMode | None:

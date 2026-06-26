@@ -147,6 +147,7 @@ python bot/main.py
 권한:
 
 - 관리자 또는 **Manage Channels** 권한이 필요합니다.
+- `/adminaccess grant`로 위임받은 유저도 사용할 수 있습니다.
 
 모드:
 
@@ -196,6 +197,7 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 권한:
 
 - `/style set`, `/style add`, `/style modify`, `/style remove`, `/style channel`: 관리자 또는 **Manage Guild** 권한이 필요합니다.
+- `/adminaccess grant`로 위임받은 유저도 관리용 `/style` 명령어를 사용할 수 있습니다.
 - `/style show`, `/style presets`: 모든 사용자가 볼 수 있습니다.
 
 스타일:
@@ -224,7 +226,23 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 /style show
 ```
 
-서버별 자동 응답 채널과 AI 스타일 설정은 `data/guild_settings.json`에 저장됩니다.
+### 관리 작업 권한 위임
+
+서버 관리자 또는 서버 소유자는 특정 유저에게 봇 관리 작업 실행 권한을 위임할 수 있습니다. 위임받은 유저는 본인의 Discord 권한이나 역할 순서와 상관없이 `/ai`나 봇 멘션으로 서버 관리 작업을 요청할 수 있고, 관리용 `/autochannel`, `/style` 명령어도 사용할 수 있습니다.
+
+```text
+/adminaccess grant user:<유저>
+/adminaccess revoke user:<유저>
+/adminaccess list
+```
+
+주의:
+
+- 위임은 사용자의 권한 검사만 우회합니다. 봇 자신의 Discord 권한과 봇 역할 순서는 여전히 필요합니다.
+- 위임 목록 관리는 서버 관리자 또는 서버 소유자만 할 수 있습니다.
+- 위임 목록은 `data/guild_settings.json`에 서버별로 저장됩니다.
+
+서버별 자동 응답 채널, AI 스타일, 관리 작업 권한 위임 설정은 `data/guild_settings.json`에 저장됩니다.
 
 ### AI 에이전트 자연어 실행 도구
 
@@ -248,9 +266,12 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 @봇 #old-channel 삭제해줘
 /ai message:#general 채널 주제를 공지와 잡담으로 바꿔줘
 @봇 AI Helper 역할 만들어줘. 색상은 #5865F2
+@봇 Warning 역할 만들어줘. 색상은 빨간색
 @봇 @AI Helper 역할 이름을 Support로 바꿔줘
+@봇 서버 역할 목록 보여줘
 @봇 @user에게 @AI Helper 역할 추가해줘
 @봇 @user에게서 @AI Helper 역할 제거해줘
+@봇 @user 역할 목록 보여줘
 @봇 sweet 10분 타임아웃 해줘
 @봇 이 이미지로 party 이모지 만들어줘
 @봇 이 파일로 cheer 사운드 추가해줘
@@ -269,7 +290,7 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 - 채널 위치, 슬로우모드, 포럼 기본 레이아웃/정렬/태그 요구, 음성 RTC 지역/영상 품질 같은 세부 설정 변경
 - 채널 복제, 공지 채널 팔로우, 채널 고정 메시지 조회
 - 채널별 역할/멤버 권한 덮어쓰기 설정 또는 제거
-- 역할 생성/수정/삭제, 역할 permission/색상/아이콘/위치 수정, 멤버에게 역할 추가/제거
+- 역할 생성/수정/삭제/목록, 역할 permission/색상/아이콘/위치 수정, 멤버에게 역할 추가/제거, 멤버 역할 목록 조회
 - 이모지 생성/수정/삭제, 스티커 생성/수정/삭제, 사운드보드 사운드 생성/수정/삭제
 - 웹훅 생성/목록/삭제, 초대 링크 생성/목록/삭제, 감사 로그 조회
 - 서버 이름/설명/아이콘/배너/스플래시/시스템 채널/규칙 채널/업데이트 채널/초대 비활성화 설정 변경
@@ -295,7 +316,8 @@ CHANNEL_CONTEXT_CHAR_LIMIT=6000
 - AutoMod와 서버 템플릿: **Manage Server** 권한이 필요합니다.
 - 멤버 제재/관리: 작업별로 **Kick Members**, **Ban Members**, **Moderate Members**, **Manage Nicknames**, **Move Members**, **Mute Members**, **Deafen Members** 권한이 필요합니다. 대량 차단은 **Ban Members**와 **Manage Server**가 모두 필요합니다.
 - 메시지/스레드/이벤트: 작업별로 **Manage Messages**, **Pin Messages**, **Create Public Threads**, **Manage Threads**, **Create Events**, **Manage Events** 권한이 필요합니다.
-- 역할/멤버 관리 작업은 Discord 역할 순서 제한을 따릅니다. 봇과 실행 사용자의 가장 높은 역할이 대상보다 높아야 합니다.
+- `/adminaccess grant`로 위임받은 유저는 위 사용자 권한과 사용자 역할 순서 검사를 통과한 것으로 처리됩니다.
+- 역할/멤버 관리 작업은 Discord 역할 순서 제한을 따릅니다. 일반 유저는 봇과 실행 사용자의 가장 높은 역할이 대상보다 높아야 하며, 위임받은 유저는 봇의 가장 높은 역할이 대상보다 높아야 합니다.
 - 요청이 설명인지 실행인지 애매하면 실행하지 않고 일반 AI 답변으로 처리합니다.
 - 서버 설정 변경, 멤버 제재, 역할/채널 수정 같은 실행 작업은 바로 실행하지 않고 채팅에 작업 내용을 먼저 표시합니다. 요청자가 **수락** 버튼을 눌러야 실행되고, **거절** 또는 시간 초과 시 취소됩니다.
 - 멤버 대상은 멘션이나 ID가 가장 정확하지만, 별명/표시 이름/유저명만 알려줘도 가능한 경우 자동으로 찾습니다. 동명이인이 있으면 찾지 못한 것으로 처리해 안전하게 멈춥니다.

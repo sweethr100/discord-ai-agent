@@ -77,7 +77,6 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @autochannel_group.command(name="add", description="AI 자동 응답 채널을 추가합니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_channels=True)
     @app_commands.describe(
         channel="AI가 자동으로 응답할 채널",
         mode="자동 응답 방식",
@@ -90,7 +89,7 @@ def register_commands(bot: "DiscordAIBot") -> None:
         mode: str,
         keywords: str = "",
     ) -> None:
-        if not await _require_manage_channels(interaction):
+        if not await _require_manage_channels(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -117,13 +116,12 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @autochannel_group.command(name="remove", description="AI 자동 응답 채널에서 제거합니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_channels=True)
     @app_commands.describe(channel="제거할 채널")
     async def autochannel_remove(
         interaction: discord.Interaction,
         channel: discord.TextChannel,
     ) -> None:
-        if not await _require_manage_channels(interaction):
+        if not await _require_manage_channels(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -145,9 +143,8 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @autochannel_group.command(name="list", description="AI 자동 응답 채널 목록을 봅니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_channels=True)
     async def autochannel_list(interaction: discord.Interaction) -> None:
-        if not await _require_manage_channels(interaction):
+        if not await _require_manage_channels(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -182,11 +179,10 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @style_group.command(name="set", description="서버 기본 AI 스타일을 설정합니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(style="서버 기본값으로 사용할 AI 스타일")
     @app_commands.autocomplete(style=style_autocomplete)
     async def style_set(interaction: discord.Interaction, style: str) -> None:
-        if not await _require_manage_guild(interaction):
+        if not await _require_manage_guild(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -261,7 +257,6 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @style_group.command(name="add", description="이 서버에만 사용할 AI 스타일을 추가합니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(
         name="추가할 스타일 이름. 영어 소문자, 숫자, _, - 만 가능",
         description="스타일의 간단한 설명",
@@ -273,7 +268,7 @@ def register_commands(bot: "DiscordAIBot") -> None:
         description: str,
         prompt: str,
     ) -> None:
-        if not await _require_manage_guild(interaction):
+        if not await _require_manage_guild(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -310,7 +305,6 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @style_group.command(name="modify", description="이 서버에 추가한 AI 스타일을 수정합니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(
         name="수정할 서버 커스텀 스타일 이름",
         description="새 설명. 비우면 기존 설명 유지",
@@ -323,7 +317,7 @@ def register_commands(bot: "DiscordAIBot") -> None:
         description: str = "",
         prompt: str = "",
     ) -> None:
-        if not await _require_manage_guild(interaction):
+        if not await _require_manage_guild(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -354,11 +348,10 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @style_group.command(name="remove", description="이 서버에 추가한 AI 스타일을 삭제합니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(name="삭제할 서버 커스텀 스타일 이름")
     @app_commands.autocomplete(name=custom_style_autocomplete)
     async def style_remove(interaction: discord.Interaction, name: str) -> None:
-        if not await _require_manage_guild(interaction):
+        if not await _require_manage_guild(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -379,7 +372,6 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     @style_group.command(name="channel", description="특정 채널의 AI 스타일을 설정합니다.")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(
         channel="스타일을 적용할 채널",
         style="채널에 적용할 스타일. server_default는 채널별 설정 제거",
@@ -390,7 +382,7 @@ def register_commands(bot: "DiscordAIBot") -> None:
         channel: discord.TextChannel,
         style: str,
     ) -> None:
-        if not await _require_manage_guild(interaction):
+        if not await _require_manage_guild(bot, interaction):
             return
 
         guild_id = _get_guild_id(interaction)
@@ -422,27 +414,137 @@ def register_commands(bot: "DiscordAIBot") -> None:
 
     bot.tree.add_command(style_group)
 
+    adminaccess_group = app_commands.Group(
+        name="adminaccess",
+        description="관리 작업 실행 권한을 위임합니다.",
+    )
+
+    @adminaccess_group.command(name="grant", description="유저에게 봇 관리 작업 실행 권한을 위임합니다.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(user="관리 작업 실행 권한을 위임할 유저")
+    async def adminaccess_grant(
+        interaction: discord.Interaction,
+        user: discord.Member,
+    ) -> None:
+        if not await _require_administrator(interaction):
+            return
+
+        guild_id = _get_guild_id(interaction)
+        if guild_id is None:
+            await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
+            return
+
+        if user.bot:
+            await _send_ephemeral(interaction, "봇 계정에는 관리 작업 실행 권한을 위임하지 않을게요.")
+            return
+
+        added = bot.settings.add_admin_delegate(guild_id, user.id)
+        if added:
+            message = f"{user.mention} 님에게 봇 관리 작업 실행 권한을 위임했어요."
+        else:
+            message = f"{user.mention} 님은 이미 봇 관리 작업 실행 권한을 위임받았어요."
+
+        await interaction.response.send_message(
+            message,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @adminaccess_group.command(name="revoke", description="유저의 봇 관리 작업 실행 권한 위임을 해제합니다.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(user="관리 작업 실행 권한 위임을 해제할 유저")
+    async def adminaccess_revoke(
+        interaction: discord.Interaction,
+        user: discord.Member,
+    ) -> None:
+        if not await _require_administrator(interaction):
+            return
+
+        guild_id = _get_guild_id(interaction)
+        if guild_id is None:
+            await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
+            return
+
+        removed = bot.settings.remove_admin_delegate(guild_id, user.id)
+        if removed:
+            message = f"{user.mention} 님의 봇 관리 작업 실행 권한 위임을 해제했어요."
+        else:
+            message = f"{user.mention} 님은 위임 목록에 없어요."
+
+        await interaction.response.send_message(
+            message,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @adminaccess_group.command(name="list", description="봇 관리 작업 실행 권한을 위임받은 유저를 봅니다.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def adminaccess_list(interaction: discord.Interaction) -> None:
+        if not await _require_administrator(interaction):
+            return
+
+        guild_id = _get_guild_id(interaction)
+        if guild_id is None:
+            await _send_ephemeral(interaction, "서버 안에서만 사용할 수 있는 명령어예요.")
+            return
+
+        delegate_ids = bot.settings.list_admin_delegates(guild_id)
+        if not delegate_ids:
+            await interaction.response.send_message("현재 봇 관리 작업 실행 권한을 위임받은 유저가 없어요.")
+            return
+
+        lines = ["봇 관리 작업 실행 권한 위임 유저:"]
+        lines.extend(f"- <@{user_id}>" for user_id in delegate_ids)
+        await interaction.response.send_message(
+            "\n".join(lines),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    bot.tree.add_command(adminaccess_group)
+
 
 def _get_guild_id(interaction: discord.Interaction) -> int | None:
     return interaction.guild_id
 
 
-async def _require_manage_channels(interaction: discord.Interaction) -> bool:
+async def _require_manage_channels(bot: "DiscordAIBot", interaction: discord.Interaction) -> bool:
     permissions = getattr(interaction.user, "guild_permissions", None)
     if permissions and (permissions.administrator or permissions.manage_channels):
         return True
+    if _is_admin_delegate(bot, interaction):
+        return True
 
-    await _send_ephemeral(interaction, "이 명령어는 관리자 또는 Manage Channels 권한이 필요해요.")
+    await _send_ephemeral(interaction, "이 명령어는 관리자, Manage Channels 권한 또는 봇 관리 작업 실행 권한 위임이 필요해요.")
     return False
 
 
-async def _require_manage_guild(interaction: discord.Interaction) -> bool:
+async def _require_manage_guild(bot: "DiscordAIBot", interaction: discord.Interaction) -> bool:
     permissions = getattr(interaction.user, "guild_permissions", None)
     if permissions and (permissions.administrator or permissions.manage_guild):
         return True
+    if _is_admin_delegate(bot, interaction):
+        return True
 
-    await _send_ephemeral(interaction, "이 명령어는 관리자 또는 Manage Guild 권한이 필요해요.")
+    await _send_ephemeral(interaction, "이 명령어는 관리자, Manage Guild 권한 또는 봇 관리 작업 실행 권한 위임이 필요해요.")
     return False
+
+
+async def _require_administrator(interaction: discord.Interaction) -> bool:
+    if interaction.guild is not None and interaction.user.id == interaction.guild.owner_id:
+        return True
+
+    permissions = getattr(interaction.user, "guild_permissions", None)
+    if permissions and permissions.administrator:
+        return True
+
+    await _send_ephemeral(interaction, "이 명령어는 서버 관리자만 사용할 수 있어요.")
+    return False
+
+
+def _is_admin_delegate(bot: "DiscordAIBot", interaction: discord.Interaction) -> bool:
+    user_id = getattr(interaction.user, "id", None)
+    return bot.settings.is_admin_delegate(interaction.guild_id, user_id)
 
 
 async def _send_ephemeral(interaction: discord.Interaction, content: str) -> None:

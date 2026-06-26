@@ -61,6 +61,65 @@ class GuildSettingsStore:
             self._save()
         return removed
 
+    def list_admin_delegates(self, guild_id: int | None) -> list[int]:
+        if guild_id is None:
+            return []
+
+        raw_delegates = self._get_guild(guild_id).get("admin_delegates", [])
+        if not isinstance(raw_delegates, list):
+            return []
+
+        delegate_ids: list[int] = []
+        seen: set[int] = set()
+        for raw_user_id in raw_delegates:
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError):
+                continue
+            if user_id in seen:
+                continue
+            delegate_ids.append(user_id)
+            seen.add(user_id)
+        return sorted(delegate_ids)
+
+    def is_admin_delegate(self, guild_id: int | None, user_id: int | None) -> bool:
+        if guild_id is None or user_id is None:
+            return False
+        return user_id in self.list_admin_delegates(guild_id)
+
+    def add_admin_delegate(self, guild_id: int, user_id: int) -> bool:
+        guild = self._ensure_guild(guild_id)
+        delegates = guild.setdefault("admin_delegates", [])
+        if not isinstance(delegates, list):
+            delegates = []
+            guild["admin_delegates"] = delegates
+
+        user_id_text = str(user_id)
+        if user_id_text in {str(delegate) for delegate in delegates}:
+            return False
+
+        delegates.append(user_id_text)
+        self._save()
+        return True
+
+    def remove_admin_delegate(self, guild_id: int, user_id: int) -> bool:
+        guild = self._ensure_guild(guild_id)
+        delegates = guild.setdefault("admin_delegates", [])
+        if not isinstance(delegates, list):
+            guild["admin_delegates"] = []
+            return False
+
+        before = len(delegates)
+        guild["admin_delegates"] = [
+            delegate
+            for delegate in delegates
+            if str(delegate) != str(user_id)
+        ]
+        removed = len(guild["admin_delegates"]) != before
+        if removed:
+            self._save()
+        return removed
+
     def list_channel_styles(self, guild_id: int | None) -> list[tuple[int, str]]:
         if guild_id is None:
             return []
@@ -267,6 +326,7 @@ class GuildSettingsStore:
                 "custom_styles": {},
                 "channel_styles": {},
                 "autochannels": {},
+                "admin_delegates": [],
             },
         )
 
@@ -279,6 +339,7 @@ class GuildSettingsStore:
         guild.setdefault("custom_styles", {})
         guild.setdefault("channel_styles", {})
         guild.setdefault("autochannels", {})
+        guild.setdefault("admin_delegates", [])
         return guild
 
     def _to_custom_style(self, name: str, raw: dict[str, Any]) -> GuildCustomStyle:
